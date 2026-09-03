@@ -59,6 +59,10 @@ def meta():
             "ai_confidence_threshold": config.THRESHOLDS.ai_confidence_threshold,
             "ai_hard_amount_mismatch_cap_pct": config.THRESHOLDS.ai_hard_amount_mismatch_cap_pct,
             "settlement_window_days": config.THRESHOLDS.settlement_window_days,
+            "exact_amount_tolerance_pct": config.THRESHOLDS.exact_amount_tolerance_pct,
+            "high_name_similarity": config.THRESHOLDS.high_name_similarity,
+            "min_name_similarity_for_ai": config.THRESHOLDS.min_name_similarity_for_ai,
+            "max_amount_mismatch_for_ai_pct": config.THRESHOLDS.max_amount_mismatch_for_ai_pct,
         },
     }
 
@@ -177,12 +181,18 @@ def decision_detail(payment_id: str, run_id: Optional[str] = None):
         audit = conn.execute(
             "SELECT * FROM audit_log WHERE payment_id = ? AND run_id = ? ORDER BY id", (payment_id, run_id),
         ).fetchall()
+        exception_row = None
+        if decision and decision["status"] == C.STATUS_EXCEPTION:
+            exception_row = conn.execute(
+                "SELECT * FROM exceptions WHERE decision_id = ?", (decision["id"],),
+            ).fetchone()
     if not decision:
         raise HTTPException(404, f"No decision for payment {payment_id} in run {run_id}")
     return {
         "payment": dict(payment) if payment else None,
         "decision": _row(decision),
         "audit_trail": [_row(r) for r in audit],
+        "exception": dict(exception_row) if exception_row else None,
     }
 
 
@@ -205,6 +215,22 @@ def list_exceptions(run_id: Optional[str] = None, category: Optional[str] = None
     with db.get_conn() as conn:
         rows = conn.execute(query, params).fetchall()
     return {"run_id": run_id, "results": [_row(r) for r in rows]}
+
+
+@app.post("/exceptions/{exception_id}/resolve")
+def resolve_exception(exception_id: int):
+    """Mark an exception as manually reviewed. This never touches the
+    reconciliation decision itself -- it only records that a human looked at
+    it, via the `resolved` flag that already existed in the schema. Marking
+    resolved is NOT the same as approving a match: the underlying decision
+    stays exactly as the engine made it, auditable either way."""
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT * FROM exceptions WHERE id = ?", (exception_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Exception {exception_id} not found")
+        conn.execute("UPDATE exceptions SET resolved = 1 WHERE id = ?", (exception_id,))
+        updated = conn.execute("SELECT * FROM exceptions WHERE id = ?", (exception_id,)).fetchone()
+    return dict(updated)
 
 
 @app.get("/audit")

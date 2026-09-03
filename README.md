@@ -25,7 +25,7 @@ Veyra reconciles **payment gateway transactions** against **bank settlement reco
 The core bet: **a false financial match is more costly than an unresolved one.** Every design decision optimizes for that.
 
 <p align="center">
-  <img src="docs/screenshots/overview.png" width="850" alt="Veyra dashboard overview — real-time reconciliation metrics">
+  <img src="docs/screenshots/landing.png" width="850" alt="Veyra landing screen">
 </p>
 
 ## Why it stands out
@@ -39,9 +39,10 @@ Most reconciliation demos show automation. Veyra shows automation **and proves i
 | Safety rate (correctly refuses the unresolvable) | **100.0%** | 6.9% |
 | False-match rate | **0.0%** | 34.2% |
 
-A naive fuzzy-matcher is confidently *wrong* more than a third of the time it automates. Veyra automates 82.4% of a 750-record batch with **zero** false or unsafe matches — and shows its work for every single one. See it live in the [Evaluation tab](docs/screenshots/evaluation.png).
+A naive fuzzy-matcher is confidently *wrong* more than a third of the time it automates. Veyra automates 82.4% of a 750-record batch with **zero** false or unsafe matches — and shows its work for every single one. See it live in the [Evaluation view](docs/screenshots/evaluation.png).
 
-The frontend is also a deliberate choice, not an afterthought: no Streamlit, no default component-library theme. It's a hand-built static UI (`web/`, vanilla HTML/CSS/JS, zero build step) with its own visual identity — a warm near-black "audit ledger" palette, a serif display face for headings, monospace for every number and identifier — because a finance-control product should look like one, not like a generic AI-chatbot template.
+The frontend is a deliberate choice, not an afterthought: no Streamlit, no default component-library theme, no purple AI-gradient hero. It's a hand-built static UI (`web/`, vanilla HTML/CSS/JS, zero build step) styled as a financial control room -- a warm near-black "audit ledger" palette, a serif display face for headings, monospace for every number and identifier -- because a finance-control product should look like one. The centerpiece is the **evidence checklist**: click any decision and see amount / date / customer / reference each marked ✓ / ! / ✕ against the actual thresholds the engine used, with a plain-language verdict ("Automation blocked" or "Match approved") underneath -- not a raw JSON dump.
+
 
 ## Table of contents
 
@@ -89,7 +90,7 @@ Every box is a small, independently-testable module. No queues, no vector DB, no
 
 **Why this workflow:** multi-source reconciliation is the highest-leverage finance-ops workflow to automate *safely* — the cost of a false match (money reconciled against the wrong transaction) is much higher than the cost of a delayed review, so the entire design optimizes for **precision and safety over raw automation rate**.
 
-**Why a hand-built frontend instead of Streamlit:** Streamlit is excellent for internal tools but every Streamlit app shares the same sidebar-plus-widgets skeleton and default theme -- instantly recognizable, and forgettable in a room full of hackathon demos. `web/` is ~700 lines of vanilla HTML/CSS/JS (no React, no bundler, no npm install) that talks to the same FastAPI backend over `fetch()`. It gets a real design system (color tokens, a serif display face, monospace data), a slide-over evidence drawer instead of a raw `st.json()` dump, and full control over layout -- for less code than wiring Streamlit's theming API to fight its defaults.
+**Why a hand-built frontend instead of Streamlit:** Streamlit is excellent for internal tools but every Streamlit app shares the same sidebar-plus-widgets skeleton and default theme -- instantly recognizable, and forgettable in a room full of hackathon demos. `web/` is vanilla HTML/CSS/JS (no React, no bundler, no npm install) that talks to the same FastAPI backend over `fetch()`: a landing screen with live numbers, a fixed control-room sidebar (Overview / Reconciliation / Exceptions / Evaluation / Audit Trail + a system-status panel), and a slide-over **evidence checklist drawer** -- amount/date/customer/reference each marked ✓/!/✕ against the engine's actual thresholds, with a plain-language verdict -- instead of a raw `st.json()` dump.
 
 ## How reconciliation works
 
@@ -168,13 +169,17 @@ To make the value of evidence-gating measurable rather than asserted, a naive ba
 
 ## Screenshots
 
-| Overview | Decision detail drawer |
+| Landing | Overview |
 |---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Decision detail](docs/screenshots/decision-detail.png) |
+| ![Landing](docs/screenshots/landing.png) | ![Overview](docs/screenshots/overview.png) |
 
-| Exception queue | Evaluation vs. naive baseline |
+| Evidence checklist (decision drawer) | Exception queue |
 |---|---|
-| ![Exceptions](docs/screenshots/exceptions.png) | ![Evaluation](docs/screenshots/evaluation.png) |
+| ![Decision detail](docs/screenshots/decision-detail.png) | ![Exceptions](docs/screenshots/exceptions.png) |
+
+| Evaluation vs. naive baseline | Audit trail (terminal log) |
+|---|---|
+| ![Evaluation](docs/screenshots/evaluation.png) | ![Audit trail](docs/screenshots/audit-trail.png) |
 
 ## How to run
 
@@ -220,13 +225,14 @@ curl 'localhost:8000/baseline'
 
 ## Recommended demo flow (~4 minutes)
 
-1. **Show the dashboard Overview** with the pre-generated 750-record run already loaded: reconciliation rate, precision, safety rate, throughput — judges see real numbers in the first 10 seconds.
-2. **Generate a fresh dataset live** (sidebar → Generate dataset → Run reconciliation) to prove it isn't canned — ~13–20 seconds for 750 records.
-3. **Decisions tab**: open an `exact_match` payment → show the evidence (exact reference, exact amount, zero ambiguity, no AI needed).
-4. **Exceptions tab**: open a `conflicting_evidence` case — reference matches exactly, amount differs by ~28% — show the system's explanation of *why* it refused, and the suggested human action. This is the core "safe refusal" moment.
-5. **If an LLM key is configured**: run again and show an `AI_ASSISTED_MATCH` decision with the AI's reasoning text and confidence in the evidence panel; then show `evaluation.per_case_type.amount_mismatch_small` improve from `MISSED_OPPORTUNITY` to `CORRECT_AUTO`.
-6. **Evaluation tab**: the outcome bar chart — zero red (`INCORRECT_AUTO`/`UNSAFE_AUTO`) bars is the headline. Scroll to **"Why this beats 'just fuzzy-match everything'"** — a naive closest-amount matcher scored on the identical dataset has a 34.2% false-match rate and a 6.9% safety rate, vs. 0.0% / 100% here. This is the single most convincing slide for judges: same data, same scoring, the only variable is evidence-gating.
-7. **Audit Trail tab**: filter by the payment_id shown earlier — one row, fully explaining the decision, actor, and evidence.
+1. **Landing screen** first — real live numbers (records processed, precision, false-match rate), not placeholders, before you even click in.
+2. **Overview**: four hero numbers, a reconciliation-confidence bar, ranked exception reasons, recent decisions — judges understand the system in the first 10 seconds.
+3. **Generate a fresh dataset live** (Generate dataset → Run reconciliation) to prove it isn't canned — ~13–20 seconds for 750 records.
+4. **Reconciliation view**: open an `exact_match` payment → the evidence checklist shows amount/date/customer/reference all ✓, verdict "Match approved."
+5. **Same view, an exception**: open a `conflicting_evidence` case — reference ✓ but amount ✕ (28% off) — verdict "Automation blocked," with the exact reason. This is the core "safe refusal" moment. Click **Resolve manually** to show a human reviewer action that's real (persisted via `POST /exceptions/{id}/resolve`), not decorative.
+6. **If an LLM key is configured**: run again and show an `AI_ASSISTED_MATCH` decision's checklist and reasoning; then show `evaluation.per_case_type.amount_mismatch_small` improve from `MISSED_OPPORTUNITY` to `CORRECT_AUTO`.
+7. **Evaluation**: the outcome chart — zero red (`INCORRECT_AUTO`/`UNSAFE_AUTO`) bars — then the baseline comparison table: 34.2% vs. 0.0% false-match rate, same data, same scoring. The single most convincing screen for judges.
+8. **Audit Trail**: filter by the payment_id shown earlier — a terminal-style log line explaining the decision, actor, and evidence.
 
 ## Known limitations
 

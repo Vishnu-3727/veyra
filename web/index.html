@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Veyra — AI Finance Controller</title>
+<title>Veyra — Financial Control Center</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>§</text></svg>">
 <link rel="stylesheet" href="styles.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -12,130 +12,163 @@
 
 <div class="loading-bar" id="loadingBar"></div>
 
-<div class="app-shell">
-
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">Veyra</span>
-      <span class="brand-tag">AI Finance Controller — evidence-gated reconciliation</span>
-    </div>
-    <div class="topbar-right">
-      <span class="status-pill" id="aiStatusPill"><span class="status-dot"></span><span id="aiStatusText">checking…</span></span>
-      <select class="field" id="runSelect" style="min-width:200px"></select>
-    </div>
-  </header>
-
-  <div class="control-row" style="margin-bottom:26px">
-    <div class="field">
-      <label>Seed</label>
-      <input type="number" id="seedInput" value="42">
-    </div>
-    <div class="field">
-      <label>Payment records</label>
-      <input type="number" id="sizeInput" value="750" step="50">
-    </div>
-    <button class="btn" id="btnGenerate">Generate dataset</button>
-    <button class="btn btn-primary" id="btnRun">Run reconciliation</button>
-    <span class="muted mono" id="controlStatus" style="font-size:12px;margin-left:4px"></span>
+<!-- ============================= LANDING ============================= -->
+<section class="landing" id="landing">
+  <div class="landing-mark">VEYRA</div>
+  <h1>Financial reconciliation,<br>with evidence.</h1>
+  <p class="sub">Automate what you can prove. Surface what you can't. A control system for merchant finance operations — not a chatbot.</p>
+  <button class="btn btn-primary btn-lg" id="btnEnter">Open Control Center →</button>
+  <div class="landing-flow">
+    <span class="node">Payment</span><span class="arrow">→</span>
+    <span class="node">Evidence</span><span class="arrow">→</span>
+    <span class="node">Decision</span><span class="arrow">→</span>
+    <span class="node">Match / Exception</span>
   </div>
+  <div class="landing-stats" id="landingStats">
+    <div class="stat"><b>—</b><span>records processed</span></div>
+    <div class="stat"><b>—</b><span>automation precision</span></div>
+    <div class="stat"><b>—</b><span>false matches</span></div>
+  </div>
+</section>
 
-  <nav class="tabs" id="tabs">
-    <div class="tab active" data-view="overview">Overview</div>
-    <div class="tab" data-view="decisions">Decisions</div>
-    <div class="tab" data-view="exceptions">Exceptions <span class="count" id="excCount"></span></div>
-    <div class="tab" data-view="evaluation">Evaluation</div>
-    <div class="tab" data-view="audit">Audit Trail</div>
-  </nav>
+<!-- ============================= APP SHELL ============================= -->
+<div class="app hidden" id="app">
 
-  <!-- ============================= OVERVIEW ============================= -->
-  <section class="view active" id="view-overview">
-    <h2 class="section-title">Run overview</h2>
-    <p class="section-desc" id="overviewCaption">No run yet. Generate a dataset and click Run reconciliation.</p>
+  <aside class="sidebar">
+    <div class="sidebar-brand">Veyra</div>
+    <div class="sidebar-tag">Financial Control Center</div>
 
-    <div class="kpi-grid" id="kpiPrimary"></div>
-    <div class="kpi-grid secondary" id="kpiSecondary"></div>
+    <div class="nav-section-label">Control Center</div>
+    <div class="nav-item active" data-view="overview">Overview</div>
+    <div class="nav-item" data-view="reconciliation">Reconciliation</div>
+    <div class="nav-item" data-view="exceptions">Exceptions <span class="count" id="excCount"></span></div>
+    <div class="nav-item" data-view="evaluation">Evaluation</div>
+    <div class="nav-item" data-view="audit">Audit Trail</div>
 
-    <div class="proof-strip" id="proofStrip" style="display:none">
-      <div class="proof-item"><span class="proof-num mono" style="color:var(--emerald)" id="proofUs">0.0%</span><span class="proof-label">Veyra false-match rate</span></div>
-      <span class="proof-vs">vs.</span>
-      <div class="proof-item"><span class="proof-num mono" style="color:var(--red)" id="proofBaseline">34.2%</span><span class="proof-label">naive "closest-amount" baseline</span></div>
-      <span class="proof-text">Same dataset, same scoring function — the only variable is evidence-gating. See the <a href="#" data-goto="evaluation" style="color:var(--brass-text)">full comparison →</a></span>
+    <div class="sidebar-system">
+      <div class="nav-section-label">System</div>
+      <div class="system-row"><span class="system-dot" id="dotAI"></span> AI Engine</div>
+      <div class="system-row"><span class="system-dot on"></span> Data Pipeline</div>
+      <div class="system-row"><span class="system-dot on"></span> Rules Engine</div>
+      <div class="demo-mode-badge">Demo Mode — synthetic data</div>
     </div>
+  </aside>
 
-    <div class="two-col" style="margin-top:8px">
-      <div class="panel">
-        <h4 style="margin:0 0 12px;font-size:13px;color:var(--text-muted);font-weight:600">Decision mix</h4>
-        <div class="chart-box"><canvas id="chartMix"></canvas></div>
+  <div class="main-col">
+    <header class="topbar">
+      <div class="topbar-title" id="topbarTitle">Overview</div>
+      <div class="topbar-right">
+        <span class="status-pill" id="aiStatusPill"><span class="status-dot"></span><span id="aiStatusText">checking…</span></span>
+        <select class="field" id="runSelect" style="min-width:190px"></select>
       </div>
-      <div class="panel">
-        <h4 style="margin:0 0 12px;font-size:13px;color:var(--text-muted);font-weight:600">Exception categories</h4>
-        <div class="chart-box"><canvas id="chartCategories"></canvas></div>
+    </header>
+
+    <div class="content">
+      <div class="control-row" style="margin-bottom:26px">
+        <div class="field"><label>Seed</label><input type="number" id="seedInput" value="42"></div>
+        <div class="field"><label>Payment records</label><input type="number" id="sizeInput" value="750" step="50"></div>
+        <button class="btn" id="btnGenerate">Generate dataset</button>
+        <button class="btn btn-primary" id="btnRun">Run reconciliation</button>
+        <span class="muted mono" id="controlStatus" style="font-size:12px;margin-left:4px"></span>
       </div>
+
+      <!-- ============================= OVERVIEW ============================= -->
+      <section class="view active" id="view-overview">
+        <h2 class="section-title">Financial Control Center</h2>
+        <p class="section-desc" id="overviewCaption">Evidence-driven reconciliation for merchant finance operations.</p>
+
+        <div class="hero-kpi-grid" id="heroKpis"></div>
+        <div class="slim-stats" id="slimStats"></div>
+
+        <div class="proof-strip" id="proofStrip" style="display:none">
+          <div class="proof-item"><span class="proof-num mono" style="color:var(--emerald)" id="proofUs">0.0%</span><span class="proof-label">Veyra false-match rate</span></div>
+          <span class="proof-vs">vs.</span>
+          <div class="proof-item"><span class="proof-num mono" style="color:var(--red)" id="proofBaseline">34.2%</span><span class="proof-label">naive "closest-amount" baseline</span></div>
+          <span class="proof-text">Same dataset, same scoring function — the only variable is evidence-gating. <a href="#" data-goto="evaluation" style="color:var(--brass-text)">Full comparison →</a></span>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h4>Reconciliation confidence</h4></div>
+          <div class="prop-bar-wrap">
+            <div class="prop-bar" id="propBar"></div>
+            <div class="prop-legend" id="propLegend"></div>
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top:16px">
+          <div class="panel">
+            <div class="panel-head"><h4>Why did records become exceptions?</h4></div>
+            <div class="reason-list" id="reasonList"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h4>Recent decisions</h4><a class="link" href="#" data-goto="reconciliation">View all →</a></div>
+            <table class="data-table table-plain" id="recentTable"><thead></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================= RECONCILIATION ============================= -->
+      <section class="view" id="view-reconciliation">
+        <h2 class="section-title">Reconciliation</h2>
+        <p class="section-desc" id="reconCaption">Every payment, matched against bank settlements and invoices. Click a row to see the evidence behind the decision.</p>
+        <div class="control-row" style="margin-bottom:16px">
+          <div class="field"><label>Status</label><select id="filterStatus"><option value="">All</option></select></div>
+          <div class="field"><label>Category</label><select id="filterCategory"><option value="">All</option></select></div>
+          <span class="muted mono" id="decisionsCount" style="font-size:12px;padding-bottom:8px"></span>
+        </div>
+        <div class="table-scroll"><table class="data-table" id="decisionsTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+
+      <!-- ============================= EXCEPTIONS ============================= -->
+      <section class="view" id="view-exceptions">
+        <h2 class="section-title">Exception queue</h2>
+        <p class="section-desc">Every unresolved case, with what was attempted, what conflicted, and a concrete suggested next action for a human reviewer.</p>
+        <div class="control-row" style="margin-bottom:16px">
+          <div class="field"><label>Category</label><select id="excFilterCategory"><option value="">All</option></select></div>
+        </div>
+        <div id="exceptionsList"></div>
+      </section>
+
+      <!-- ============================= EVALUATION ============================= -->
+      <section class="view" id="view-evaluation">
+        <h2 class="section-title">Evaluation against known ground truth</h2>
+        <p class="section-desc">Every ground-truth payment is classified as either <strong>safely resolvable</strong> (a correct answer exists in the evidence) or <strong>not safely resolvable</strong> (no system — human or AI — could determine a unique correct answer). Veyra is scored on both correctness AND safety.</p>
+
+        <div class="hero-kpi-grid" id="evalHeroKpis"></div>
+
+        <div class="panel">
+          <div class="panel-head"><h4>Outcome breakdown</h4></div>
+          <div class="chart-box"><canvas id="chartOutcomes"></canvas></div>
+        </div>
+
+        <div class="panel">
+          <h4 style="margin:0 0 4px;font-size:15px;font-family:var(--font-display);font-weight:500">Same dataset. Same evaluation function. Different decision policy.</h4>
+          <p class="muted" style="font-size:13px;max-width:760px">The naive baseline always commits to the closest-amount bank record in the settlement window — no reference check, no name evidence, no duplicate detection, no ambiguity detection, no AI, no policy caps.</p>
+          <table class="data-table table-plain" id="baselineTable" style="margin-top:10px"><thead></thead><tbody></tbody></table>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h4>Accuracy by difficulty case type</h4></div>
+          <div class="table-scroll"><table class="data-table" id="caseTypeTable"><thead></thead><tbody></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- ============================= AUDIT ============================= -->
+      <section class="view" id="view-audit">
+        <h2 class="section-title">Audit trail</h2>
+        <p class="section-desc">Immutable, append-only log of every decision: source records, actor, evidence, confidence, and timestamp.</p>
+        <div class="control-row" style="margin-bottom:16px">
+          <div class="field"><label>Payment ID</label><input type="text" id="auditPaymentFilter" placeholder="pay_..." style="min-width:220px"></div>
+        </div>
+        <div class="log-scroll" id="auditLog"></div>
+      </section>
+
+      <footer class="app-footer">
+        <span>Veyra — built for Razorpay Buildathon 2026, Track 04</span>
+        <span id="apiTarget" class="mono"></span>
+      </footer>
     </div>
-  </section>
-
-  <!-- ============================= DECISIONS ============================= -->
-  <section class="view" id="view-decisions">
-    <h2 class="section-title">Inspect individual decisions</h2>
-    <p class="section-desc">Every reconciliation decision, with the evidence behind it. Click a row to see the full audit detail.</p>
-    <div class="control-row" style="margin-bottom:16px">
-      <div class="field"><label>Status</label><select id="filterStatus"><option value="">All</option></select></div>
-      <div class="field"><label>Category</label><select id="filterCategory"><option value="">All</option></select></div>
-      <span class="muted mono" id="decisionsCount" style="font-size:12px;padding-bottom:8px"></span>
-    </div>
-    <div class="table-scroll"><table class="data-table" id="decisionsTable"><thead></thead><tbody></tbody></table></div>
-  </section>
-
-  <!-- ============================= EXCEPTIONS ============================= -->
-  <section class="view" id="view-exceptions">
-    <h2 class="section-title">Exception queue — what a human reviewer sees</h2>
-    <p class="section-desc">Every unresolved case, with what was attempted, what conflicted, and a concrete suggested next action.</p>
-    <div class="control-row" style="margin-bottom:16px">
-      <div class="field"><label>Category</label><select id="excFilterCategory"><option value="">All</option></select></div>
-    </div>
-    <div id="exceptionsList"></div>
-  </section>
-
-  <!-- ============================= EVALUATION ============================= -->
-  <section class="view" id="view-evaluation">
-    <h2 class="section-title">Evaluation against known ground truth</h2>
-    <p class="section-desc">Every ground-truth payment is classified as either <strong>safely resolvable</strong> (a correct answer exists in the evidence) or <strong>not safely resolvable</strong> (no system — human or AI — could determine a unique correct answer). Veyra is scored on both correctness AND safety.</p>
-
-    <div class="panel">
-      <h4 style="margin:0 0 12px;font-size:13px;color:var(--text-muted);font-weight:600">Outcome breakdown</h4>
-      <div class="chart-box"><canvas id="chartOutcomes"></canvas></div>
-    </div>
-
-    <div class="panel">
-      <h4 style="margin:0 0 4px;font-size:15px;font-family:var(--font-display);font-weight:500">Why this beats "just fuzzy-match everything"</h4>
-      <p class="muted" style="font-size:13px;max-width:760px">The naive baseline always commits to the closest-amount bank record in the settlement window — no reference check, no name evidence, no duplicate detection, no ambiguity detection, no AI, no policy caps. Same dataset, same ground truth, same scoring function — the only variable is evidence-gating.</p>
-      <div class="chart-box"><canvas id="chartBaseline"></canvas></div>
-      <div class="two-col" style="margin-top:16px">
-        <div class="kpi"><div class="kpi-label">Naive baseline false-match rate</div><div class="kpi-value red" id="baselineFalseRate">—</div></div>
-        <div class="kpi"><div class="kpi-label">Veyra's false-match rate</div><div class="kpi-value emerald" id="usFalseRate">—</div></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h4 style="margin:0 0 12px;font-size:13px;color:var(--text-muted);font-weight:600">Accuracy by difficulty case type</h4>
-      <div class="table-scroll"><table class="data-table" id="caseTypeTable"><thead></thead><tbody></tbody></table></div>
-    </div>
-  </section>
-
-  <!-- ============================= AUDIT ============================= -->
-  <section class="view" id="view-audit">
-    <h2 class="section-title">Audit trail</h2>
-    <p class="section-desc">Immutable, append-only log of every decision: source records, actor, evidence, confidence, and timestamp.</p>
-    <div class="control-row" style="margin-bottom:16px">
-      <div class="field"><label>Payment ID</label><input type="text" id="auditPaymentFilter" placeholder="pay_..." style="min-width:220px"></div>
-    </div>
-    <div class="table-scroll"><table class="data-table" id="auditTable"><thead></thead><tbody></tbody></table></div>
-  </section>
-
-  <footer class="app-footer">
-    <span>Veyra — built for Razorpay Buildathon 2026, Track 04</span>
-    <span id="apiTarget" class="mono"></span>
-  </footer>
+  </div>
 </div>
 
 <div class="drawer-overlay" id="drawerOverlay"></div>
