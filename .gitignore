@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/finance.db
+data/raw/*.csv
+data/raw/generation_summary.json
+.pytest_cache/
+.streamlit/
+*.egg-info/
