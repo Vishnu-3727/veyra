@@ -120,6 +120,13 @@ function renderKV(value, depth = 0) {
 Chart.defaults.color = '#98979f';
 Chart.defaults.font.family = "'Inter', sans-serif";
 Chart.defaults.borderColor = '#29292f';
+// Every chart lives in a `.chart-box` with an explicit CSS height (see
+// styles.css). Without this, Chart.js ignores that height and sizes the
+// canvas from its own aspect ratio based on container width -- which is
+// what was blowing the donut/bar charts up to hundreds of pixels tall on
+// wide viewports and overlapping the footer.
+Chart.defaults.maintainAspectRatio = false;
+Chart.defaults.responsive = true;
 
 function upsertChart(key, canvasId, config) {
   if (state.charts[key]) state.charts[key].destroy();

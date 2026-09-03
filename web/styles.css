@@ -309,7 +309,7 @@ table.data-table tbody tr:hover { background: var(--surface-hover); }
 
 /* ---------- charts ---------- */
 
-.chart-box { position: relative; height: 260px; }
+.chart-box { position: relative; height: 260px; overflow: hidden; }
 .chart-box.tall { height: 320px; }
 
 /* ---------- misc ---------- */
