@@ -73,7 +73,7 @@ app/candidates.py               blocking (settlement window + amount tolerance +
 app/scoring.py                  deterministic decision tree: AUTO_MATCH / NEEDS_AI / EXCEPTION
         v
 app/ai_reasoning.py  ----\      LLM call, ONLY for genuinely ambiguous candidates; narrow, structured I/O
-        v                 \
+app/settings.py      ----/      runtime-configurable provider/key/model -- changeable live, no restart
 app/policy.py                   hard guardrails on AI output (confidence floor, amount-mismatch cap,
         v                       candidate-set membership) -- AI can propose, never unilaterally decide
 app/exceptions.py                structures every unresolved case for a human reviewer
@@ -109,7 +109,24 @@ Every box is a small, independently-testable module. No queues, no vector DB, no
 - **Input**: the LLM sees precomputed, trustworthy features — not raw data it has to re-derive — and is explicitly instructed to decline (`NO_MATCH`) when evidence is contested or no candidate stands out.
 - **Output contract**: strict JSON (`decision`, `candidate_id`, `confidence`, `reasoning`, `risk_flags`), parsed and validated before use.
 - **Failure handling**: no API key, a timeout, a network error, or malformed JSON all produce the same outcome — an explicit `AI_UNAVAILABLE` exception, routed to human review. The pipeline never falls back to guessing, and it never crashes.
+- **Reliability circuit breaker** (`config.py:ai_circuit_breaker_threshold`, default 3): if the AI provider fails 3 times in a row mid-batch (bad key, outage, broken network path), the rest of that batch's AI-eligible cases skip the network call entirely and go straight to an `AI_UNAVAILABLE` exception instead of each waiting out the full per-call timeout. A hard wall-clock watchdog (`app/ai_reasoning.py`, `ThreadPoolExecutor` + `future.result(timeout=...)`) backs this up — the function is guaranteed to return within `timeout+3s` no matter what the underlying HTTP client does, so a single bad key can never turn a 750-record batch into a multi-minute hang. When this trips, the dashboard shows an explicit "AI provider stopped responding mid-batch" banner — never a silent slowdown.
 - **No unilateral authority**: every AI "MATCH" is re-verified by `app/policy.py` against hard, non-negotiable caps. A confident-but-wrong AI proposal is downgraded to an `UNSUPPORTED_AI_DECISION` exception, not silently accepted.
+
+### Bring your own key -- switchable provider, live, no restart
+
+`app/settings.py` owns the LLM provider/key/model as mutable runtime state (persisted to SQLite, seeded from `.env` on first boot). Click the AI status pill in the dashboard to open **Settings**: pick a provider, pick a model, paste a key, hit Save -- it takes effect on the *next* reconciliation run, no restart, no file editing. The key is never echoed back by any API response, only a masked last-4-character hint.
+
+Curated presets (all OpenAI-compatible chat-completions endpoints, so `ai_reasoning.py` needs zero provider-specific code):
+
+| Provider | Default model | Notes |
+|---|---|---|
+| **OpenRouter** (default) | `nvidia/nemotron-nano-9b-v2:free` | NVIDIA's open-weight Nemotron models, free tier, just a signup |
+| NVIDIA NIM | `nvidia/llama-3.1-nemotron-70b-instruct` | Direct from build.nvidia.com |
+| OpenAI | `gpt-4o-mini` | |
+| Groq | `llama-3.3-70b-versatile` | Fast inference |
+| Custom | — | Any other OpenAI-compatible base URL + model |
+
+`GET /settings` returns the current (non-secret) config plus the preset catalog; `POST /settings` updates it (`provider`, `api_key`, `base_url`, `model` — all optional, omit `api_key` to keep the existing one).
 
 ## The synthetic dataset
 
@@ -181,6 +198,10 @@ To make the value of evidence-gating measurable rather than asserted, a naive ba
 |---|---|
 | ![Evaluation](docs/screenshots/evaluation.png) | ![Audit trail](docs/screenshots/audit-trail.png) |
 
+| AI provider settings (bring your own key) |
+|---|
+| ![Settings](docs/screenshots/settings.png) |
+
 ## How to run
 
 ```bash
@@ -193,11 +214,13 @@ This creates a virtualenv on first run, installs dependencies, copies `.env.exam
 
 `run.sh` is idempotent and safe to re-run: if an API from a previous `./run.sh` is still alive and healthy on the same port, it's reused instead of failing with "address already in use"; a genuine port conflict fails fast with a clear message (`API_PORT=8001 ./run.sh` / `DASHBOARD_PORT=8502 ./run.sh` to work around it).
 
-To enable live AI reasoning, put a real key in `.env` before running:
+To enable live AI reasoning, the easiest path is the dashboard itself: click the **AI status pill** (top right) → pick a provider (OpenRouter/Nemotron is the default, free-tier) → paste a key → **Save**. Takes effect immediately, no restart.
+
+Or set it in `.env` before starting:
 ```
-LLM_API_KEY=sk-...
-LLM_BASE_URL=https://api.openai.com/v1     # or any OpenAI-compatible endpoint
-LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=sk-or-...
+LLM_BASE_URL=https://openrouter.ai/api/v1   # default: OpenRouter + Nemotron. Any OpenAI-compatible endpoint works.
+LLM_MODEL=nvidia/nemotron-nano-9b-v2:free
 ```
 Without a key the system runs in fully-functional fallback mode — ambiguous cases become explicit `AI_UNAVAILABLE` exceptions instead of being guessed.
 
@@ -219,6 +242,8 @@ curl 'localhost:8000/runs/<run_id>/evaluation'
 curl 'localhost:8000/exceptions?run_id=<run_id>'
 curl 'localhost:8000/decisions/<payment_id>?run_id=<run_id>'
 curl 'localhost:8000/baseline'
+curl 'localhost:8000/settings'
+curl -X POST 'localhost:8000/settings?provider=openrouter&api_key=sk-or-...'
 ```
 
 **Tests**: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/ -v` (the env-var works around unrelated third-party pytest plugins that may be globally installed on the host; it is not required in a clean environment).
@@ -236,7 +261,7 @@ curl 'localhost:8000/baseline'
 
 ## Known limitations
 
-- **No live LLM verified in this build environment.** `app/ai_reasoning.py` is fully implemented against the OpenAI-compatible chat completions API and unit-tested (`tests/test_policy.py`) against synthetic AI responses covering match/no-match/hallucinated-candidate/low-confidence/over-the-cap scenarios, but end-to-end behavior with a real model has not been observed in this environment. Add a key to `.env` (`LLM_API_KEY`) to exercise it live — any OpenAI-compatible endpoint works.
+- **No successful live LLM completion verified in this build environment.** `app/ai_reasoning.py`/`app/settings.py` are fully implemented against the OpenAI-compatible chat-completions API, unit-tested (`tests/test_policy.py`) against synthetic AI responses (match/no-match/hallucinated-candidate/low-confidence/over-the-cap), and the *failure* path was verified live end-to-end (an invalid key against real OpenRouter correctly triggered the timeout, the circuit breaker, and the dashboard warning banner, bounded to ~85s instead of hanging). What has NOT been verified is a real successful completion from a valid key — this build environment had no working key to test with. Add one via the Settings panel to exercise it live.
 - **Invoice corroboration is a secondary signal**, keyed on exact `order_id`, not a second full reconciliation pass. It is reported per-decision but does not gate the primary bank-match status.
 - **Single-process, single-machine.** No horizontal scaling; SQLite is sufficient at this volume (750–~20k records ingest/reconcile in seconds) but would need to move to a real database well before six-figure batch sizes.
 - **Blocking thresholds are dataset-tuned.** `config.py` centralizes every threshold; they were tuned against this synthetic distribution and would need re-validation against a materially different real-world amount/name distribution.
@@ -253,7 +278,8 @@ app/
   normalization.py         name/ref normalization, amount/date parsing, fuzzy similarity
   candidates.py            candidate generation + duplicate detection
   scoring.py               deterministic decision tree
-  ai_reasoning.py          LLM client, narrow scope, graceful degradation
+  ai_reasoning.py          LLM client, narrow scope, graceful degradation, hard watchdog timeout
+  settings.py              runtime-configurable provider/key/model (bring your own key)
   policy.py                hard guardrails on AI output
   exceptions.py            structured exception detail + suggested actions
   pipeline.py              orchestration + persistence

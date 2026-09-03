@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from app import constants as C
 from app import db
+from app import settings as llm_settings
 from app.evaluation import evaluate
 from app.pipeline import run_reconciliation
 
@@ -41,7 +42,9 @@ def _row(r) -> dict:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "ai_enabled": config.AI_ENABLED, "llm_model": config.LLM_MODEL if config.AI_ENABLED else None}
+    s = llm_settings.get()
+    return {"status": "ok", "ai_enabled": s.enabled, "llm_provider": s.provider if s.enabled else None,
+            "llm_model": s.model if s.enabled else None}
 
 
 @app.get("/meta")
@@ -65,6 +68,31 @@ def meta():
             "max_amount_mismatch_for_ai_pct": config.THRESHOLDS.max_amount_mismatch_for_ai_pct,
         },
     }
+
+
+@app.get("/settings")
+def get_settings():
+    """Current LLM provider configuration (never includes the raw API key)
+    plus the curated provider presets the dashboard's Settings panel offers."""
+    s = llm_settings.get()
+    return {**s.public_dict(), "presets": llm_settings.PROVIDER_PRESETS}
+
+
+@app.post("/settings")
+def update_settings(
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    """Switch LLM provider/model or set a new API key, live, with no restart.
+    Omit `api_key` to keep the currently configured one (e.g. when only
+    switching models within the same provider); pass an empty string to
+    clear it."""
+    if provider is not None and provider not in llm_settings.PROVIDER_PRESETS:
+        raise HTTPException(400, f"Unknown provider {provider!r}. Valid: {list(llm_settings.PROVIDER_PRESETS)}")
+    s = llm_settings.update(provider=provider, api_key=api_key, base_url=base_url, model=model)
+    return {**s.public_dict(), "presets": llm_settings.PROVIDER_PRESETS}
 
 
 @app.post("/dataset/generate")

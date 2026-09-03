@@ -227,10 +227,7 @@ document.addEventListener('click', (e) => {
 // bootstrap
 // ---------------------------------------------------------------------------
 
-async function loadMetaAndHealth() {
-  const [meta, health] = await Promise.all([apiGet('/meta'), apiGet('/health').catch(() => null)]);
-  state.meta = meta;
-  state.health = health;
+function renderAIStatus(health) {
   const pill = document.getElementById('aiStatusPill');
   const text = document.getElementById('aiStatusText');
   const dotAI = document.getElementById('dotAI');
@@ -247,6 +244,13 @@ async function loadMetaAndHealth() {
     text.textContent = 'AI disabled — fallback mode';
     dotAI.className = 'system-dot off';
   }
+}
+
+async function loadMetaAndHealth() {
+  const [meta, health] = await Promise.all([apiGet('/meta'), apiGet('/health').catch(() => null)]);
+  state.meta = meta;
+  state.health = health;
+  renderAIStatus(health);
   document.getElementById('apiTarget').textContent = API_BASE;
 
   const statusSel = document.getElementById('filterStatus');
@@ -324,6 +328,17 @@ function renderOverview() {
 
   document.getElementById('overviewCaption').innerHTML =
     `Evidence-driven reconciliation for merchant finance operations. &nbsp;—&nbsp; run <span class="mono">${state.runId}</span>, started ${new Date(state.runDetail.started_at).toLocaleString()}`;
+
+  const cbWarning = document.getElementById('circuitBreakerWarning');
+  if (m.ai_circuit_breaker_tripped) {
+    cbWarning.style.display = 'block';
+    cbWarning.innerHTML = `<div class="verdict-box blocked" style="margin-bottom:20px">
+      <div class="verdict-title">AI provider stopped responding mid-batch</div>
+      <div class="verdict-text">${escapeHtml(m.ai_circuit_breaker_reason || '')} — remaining AI-eligible cases were routed straight to review instead of retrying a broken connection. <a href="#" onclick="document.getElementById('aiStatusPill').click(); return false;" style="color:var(--brass-text)">Check provider settings →</a></div>
+    </div>`;
+  } else {
+    cbWarning.style.display = 'none';
+  }
 
   document.getElementById('heroKpis').innerHTML = [
     heroKpi('Records processed', fmtNum(total)),
@@ -677,6 +692,121 @@ document.getElementById('btnRun').addEventListener('click', async () => {
   } catch (e) {
     toast(e.message, 'error');
     status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AI provider settings modal (bring-your-own-key)
+// ---------------------------------------------------------------------------
+
+let settingsData = null; // last /settings response (presets + current config)
+
+function openSettingsModal() {
+  document.getElementById('settingsOverlay').classList.add('open');
+}
+function closeSettingsModal() {
+  document.getElementById('settingsOverlay').classList.remove('open');
+}
+document.getElementById('aiStatusPill').addEventListener('click', () => loadSettingsModal());
+document.getElementById('settingsClose').addEventListener('click', closeSettingsModal);
+document.getElementById('settingsCancel').addEventListener('click', closeSettingsModal);
+document.getElementById('settingsOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'settingsOverlay') closeSettingsModal();
+});
+
+function populateModelOptions(providerKey) {
+  const preset = settingsData.presets[providerKey];
+  const modelSelect = document.getElementById('settingsModelSelect');
+  const modelCustom = document.getElementById('settingsModelCustom');
+  if (!preset || preset.models.length === 0) {
+    modelSelect.style.display = 'none';
+    modelCustom.style.display = 'block';
+    return;
+  }
+  modelSelect.style.display = 'block';
+  modelCustom.style.display = 'none';
+  modelSelect.innerHTML = preset.models.map((m) => `<option value="${m}">${m}</option>`).join('')
+    + '<option value="__custom__">Custom model name…</option>';
+}
+
+function applyProviderPreset(providerKey, keepCurrentValues) {
+  const preset = settingsData.presets[providerKey];
+  populateModelOptions(providerKey);
+  if (!keepCurrentValues) {
+    document.getElementById('settingsBaseUrl').value = preset.base_url;
+    const modelSelect = document.getElementById('settingsModelSelect');
+    if (preset.models.length) modelSelect.value = preset.default_model;
+    else document.getElementById('settingsModelCustom').value = preset.default_model;
+  }
+  const keyLink = document.getElementById('settingsKeyLink');
+  if (preset.key_url) {
+    keyLink.href = preset.key_url;
+    keyLink.style.display = 'inline';
+  } else {
+    keyLink.style.display = 'none';
+  }
+}
+
+async function loadSettingsModal() {
+  try {
+    settingsData = await apiGet('/settings');
+  } catch (e) {
+    toast(e.message, 'error');
+    return;
+  }
+  const providerSelect = document.getElementById('settingsProvider');
+  providerSelect.innerHTML = Object.entries(settingsData.presets)
+    .map(([key, p]) => `<option value="${key}">${p.label}</option>`).join('');
+  providerSelect.value = settingsData.provider;
+  applyProviderPreset(settingsData.provider, true);
+
+  // reflect the CURRENT live config, not just the preset defaults
+  document.getElementById('settingsBaseUrl').value = settingsData.base_url;
+  const modelSelect = document.getElementById('settingsModelSelect');
+  if ([...modelSelect.options].some((o) => o.value === settingsData.model)) {
+    modelSelect.value = settingsData.model;
+  } else if (modelSelect.style.display !== 'none' && modelSelect.options.length) {
+    modelSelect.value = '__custom__';
+    document.getElementById('settingsModelCustom').style.display = 'block';
+    document.getElementById('settingsModelCustom').value = settingsData.model;
+  } else {
+    document.getElementById('settingsModelCustom').value = settingsData.model;
+  }
+  document.getElementById('settingsApiKey').value = '';
+  document.getElementById('settingsKeyHint').textContent = settingsData.key_hint
+    ? `Currently configured: key ending in ${settingsData.key_hint}. Leave blank to keep it.`
+    : 'No API key configured yet -- AI reasoning falls back to explicit exceptions.';
+  openSettingsModal();
+}
+
+document.getElementById('settingsProvider').addEventListener('change', (e) => applyProviderPreset(e.target.value, false));
+document.getElementById('settingsModelSelect').addEventListener('change', (e) => {
+  document.getElementById('settingsModelCustom').style.display = e.target.value === '__custom__' ? 'block' : 'none';
+});
+
+document.getElementById('settingsSave').addEventListener('click', async () => {
+  const provider = document.getElementById('settingsProvider').value;
+  const modelSelect = document.getElementById('settingsModelSelect');
+  const model = (modelSelect.style.display !== 'none' && modelSelect.value !== '__custom__')
+    ? modelSelect.value
+    : document.getElementById('settingsModelCustom').value.trim();
+  const baseUrl = document.getElementById('settingsBaseUrl').value.trim();
+  const apiKeyInput = document.getElementById('settingsApiKey').value;
+  const btn = document.getElementById('settingsSave');
+  btn.disabled = true;
+  try {
+    const params = { provider, base_url: baseUrl, model };
+    if (apiKeyInput !== '') params.api_key = apiKeyInput; // omit entirely to keep the existing key
+    const updated = await apiPost('/settings', params);
+    toast(updated.enabled ? `AI enabled: ${updated.provider} / ${updated.model}` : 'Settings saved (no API key set).', 'success');
+    closeSettingsModal();
+    const health = await apiGet('/health').catch(() => null);
+    state.health = health;
+    renderAIStatus(health);
+  } catch (e) {
+    toast(e.message, 'error');
   } finally {
     btn.disabled = false;
   }

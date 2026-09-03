@@ -13,11 +13,14 @@ that as "AI unavailable", never as an implicit match.
 from __future__ import annotations
 
 import json
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import Optional
 
-import config
+from app import settings as llm_settings
 from app.candidates import Candidate
 
 SYSTEM_PROMPT = """You are a financial reconciliation assistant helping match a payment \
@@ -87,44 +90,92 @@ def _build_user_prompt(payment: dict, candidates: list[Candidate]) -> str:
     )
 
 
+_JSON_MODE_PROVIDERS = {"openai", "groq"}  # providers verified to support response_format=json_object;
+# others (OpenRouter/NVIDIA NIM/custom open-weight models) may reject that param or ignore it
+# inconsistently, so we rely on prompt instructions plus a resilient extraction fallback instead.
+
+
+def _extract_json(raw: str) -> dict:
+    """Parse a JSON object from a model response that may not have been
+    produced under strict JSON mode -- e.g. wrapped in prose or a code
+    fence. Raises json.JSONDecodeError if nothing usable is found."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="veyra-ai")
+
+
+def _call_llm(s, payment: dict, candidates: list[Candidate], start: float) -> AIResult:
+    """The actual network call, run on a worker thread so the caller can
+    enforce a hard wall-clock ceiling regardless of whether the underlying
+    HTTP client honors its own `timeout=` parameter."""
+    from openai import OpenAI
+
+    extra_headers = {}
+    if s.provider == "openrouter":
+        # Optional but polite: identifies the app in OpenRouter's dashboard/rankings.
+        extra_headers = {"HTTP-Referer": "https://github.com/Vishnu-3727/Veyra---FIntech", "X-Title": "Veyra"}
+
+    client = OpenAI(api_key=s.api_key, base_url=s.base_url, timeout=s.timeout_seconds, max_retries=0)
+    kwargs = dict(
+        model=s.model,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_prompt(payment, candidates)},
+        ],
+        temperature=0,
+    )
+    if s.provider in _JSON_MODE_PROVIDERS:
+        kwargs["response_format"] = {"type": "json_object"}
+    if extra_headers:
+        kwargs["extra_headers"] = extra_headers
+    resp = client.chat.completions.create(**kwargs)
+    latency_ms = (time.perf_counter() - start) * 1000
+    raw = resp.choices[0].message.content or ""
+    parsed = _extract_json(raw)
+    decision = str(parsed.get("decision", "")).upper()
+    if decision not in ("MATCH", "NO_MATCH"):
+        return AIResult(decision="ERROR", error=f"unrecognized AI decision value: {decision!r}",
+                         latency_ms=latency_ms, model=s.model)
+    confidence = int(parsed.get("confidence", 0) or 0)
+    return AIResult(
+        decision=decision,
+        candidate_id=parsed.get("candidate_id"),
+        confidence=max(0, min(100, confidence)),
+        reasoning=str(parsed.get("reasoning", "")),
+        risk_flags=list(parsed.get("risk_flags", []) or []),
+        latency_ms=latency_ms,
+        model=s.model,
+    )
+
+
 def reason_about_candidates(payment: dict, candidates: list[Candidate]) -> AIResult:
-    if not config.AI_ENABLED:
-        return AIResult(decision="ERROR", error="AI disabled: no LLM_API_KEY configured", model=config.LLM_MODEL)
+    s = llm_settings.get()
+    if not s.enabled:
+        return AIResult(decision="ERROR", error="AI disabled: no API key configured", model=s.model)
 
     start = time.perf_counter()
+    # Hard watchdog: never trust the HTTP client's own timeout alone -- some
+    # environments/proxies swallow it (slow DNS/TLS/connect hangs before the
+    # client's read-timeout clock even starts). This guarantees this function
+    # returns within timeout_seconds+grace no matter what the network does,
+    # which is what makes the circuit breaker's worst-case math in
+    # app/pipeline.py actually true.
+    future = _executor.submit(_call_llm, s, payment, candidates, start)
     try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=config.LLM_API_KEY, base_url=config.LLM_BASE_URL, timeout=config.LLM_TIMEOUT_SECONDS)
-        resp = client.chat.completions.create(
-            model=config.LLM_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": _build_user_prompt(payment, candidates)},
-            ],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        latency_ms = (time.perf_counter() - start) * 1000
-        raw = resp.choices[0].message.content
-        parsed = json.loads(raw)
-        decision = str(parsed.get("decision", "")).upper()
-        if decision not in ("MATCH", "NO_MATCH"):
-            return AIResult(decision="ERROR", error=f"unrecognized AI decision value: {decision!r}",
-                             latency_ms=latency_ms, model=config.LLM_MODEL)
-        confidence = int(parsed.get("confidence", 0) or 0)
-        return AIResult(
-            decision=decision,
-            candidate_id=parsed.get("candidate_id"),
-            confidence=max(0, min(100, confidence)),
-            reasoning=str(parsed.get("reasoning", "")),
-            risk_flags=list(parsed.get("risk_flags", []) or []),
-            latency_ms=latency_ms,
-            model=config.LLM_MODEL,
-        )
+        return future.result(timeout=s.timeout_seconds + 3)
+    except FutureTimeoutError:
+        return AIResult(decision="ERROR", error=f"AI call did not respond within {s.timeout_seconds}s (hard timeout)",
+                         latency_ms=(time.perf_counter() - start) * 1000, model=s.model)
     except json.JSONDecodeError as e:
         return AIResult(decision="ERROR", error=f"malformed AI response (not valid JSON): {e}",
-                         latency_ms=(time.perf_counter() - start) * 1000, model=config.LLM_MODEL)
+                         latency_ms=(time.perf_counter() - start) * 1000, model=s.model)
     except Exception as e:  # noqa: BLE001 - any AI/network failure must degrade gracefully, never crash the pipeline
         return AIResult(decision="ERROR", error=f"AI call failed: {type(e).__name__}: {e}",
-                         latency_ms=(time.perf_counter() - start) * 1000, model=config.LLM_MODEL)
+                         latency_ms=(time.perf_counter() - start) * 1000, model=s.model)

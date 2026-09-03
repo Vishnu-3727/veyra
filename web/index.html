@@ -58,7 +58,7 @@
     <header class="topbar">
       <div class="topbar-title" id="topbarTitle">Overview</div>
       <div class="topbar-right">
-        <span class="status-pill" id="aiStatusPill"><span class="status-dot"></span><span id="aiStatusText">checking…</span></span>
+        <span class="status-pill" id="aiStatusPill" title="Click to configure the AI provider" style="cursor:pointer"><span class="status-dot"></span><span id="aiStatusText">checking…</span></span>
         <select class="field" id="runSelect" style="min-width:190px"></select>
       </div>
     </header>
@@ -76,6 +76,7 @@
       <section class="view active" id="view-overview">
         <h2 class="section-title">Financial Control Center</h2>
         <p class="section-desc" id="overviewCaption">Evidence-driven reconciliation for merchant finance operations.</p>
+        <div id="circuitBreakerWarning" style="display:none"></div>
 
         <div class="hero-kpi-grid" id="heroKpis"></div>
         <div class="slim-stats" id="slimStats"></div>
@@ -181,6 +182,45 @@
     <span class="drawer-close" id="drawerClose">&times;</span>
   </div>
   <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<div class="modal-overlay" id="settingsOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <div style="font-family:var(--font-display);font-size:18px;font-weight:500">AI provider settings</div>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">Bring your own key. Switch provider or model any time -- takes effect immediately, no restart.</div>
+      </div>
+      <span class="drawer-close" id="settingsClose">&times;</span>
+    </div>
+    <div class="modal-body">
+      <div class="field" style="margin-bottom:14px">
+        <label>Provider</label>
+        <select id="settingsProvider" style="width:100%"></select>
+      </div>
+      <div class="field" style="margin-bottom:14px">
+        <label>Model</label>
+        <select id="settingsModelSelect" style="width:100%"></select>
+        <input type="text" id="settingsModelCustom" placeholder="model name" style="width:100%;margin-top:6px;display:none">
+      </div>
+      <div class="field" style="margin-bottom:6px">
+        <label>Base URL</label>
+        <input type="text" id="settingsBaseUrl" style="width:100%">
+      </div>
+      <div class="field" style="margin-bottom:6px">
+        <label>API key</label>
+        <input type="password" id="settingsApiKey" style="width:100%" placeholder="paste your API key">
+      </div>
+      <div class="muted mono" id="settingsKeyHint" style="font-size:11.5px;margin-bottom:16px"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <a id="settingsKeyLink" href="#" target="_blank" rel="noopener" class="link" style="font-size:12.5px">Get an API key →</a>
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="settingsCancel">Cancel</button>
+          <button class="btn btn-primary" id="settingsSave">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="runtime-config.js"></script>

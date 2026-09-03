@@ -16,7 +16,8 @@ from pathlib import Path
 
 from app import constants as C
 from app import db
-from app.ai_reasoning import reason_about_candidates
+from app import settings as llm_settings
+from app.ai_reasoning import AIResult, reason_about_candidates
 from app.candidates import generate_candidates
 from app.exceptions import build_exception_detail
 from app.ingestion import ingest_all
@@ -67,6 +68,9 @@ def run_reconciliation(raw_dir: Path | None = None) -> dict:
         status_counts = {C.STATUS_AUTO_MATCH: 0, C.STATUS_AI_ASSISTED_MATCH: 0, C.STATUS_EXCEPTION: 0}
         category_counts: dict[str, int] = {}
         ai_invocations = 0
+        ai_consecutive_failures = 0
+        ai_circuit_open = False
+        ai_circuit_reason = ""
         total_proc_ms = 0.0
 
         for payment in payments:
@@ -97,7 +101,25 @@ def run_reconciliation(raw_dir: Path | None = None) -> dict:
             elif outcome.status == NEEDS_AI:
                 ai_used = True
                 ai_invocations += 1
-                ai_result = reason_about_candidates(payment, outcome.ai_candidates)
+                if not llm_settings.get().enabled:
+                    ai_result = AIResult(decision="ERROR", error="AI disabled: no API key configured",
+                                          model=llm_settings.get().model)
+                elif ai_circuit_open:
+                    ai_result = AIResult(
+                        decision="ERROR",
+                        error=f"AI circuit breaker open after {THRESHOLDS.ai_circuit_breaker_threshold} "
+                              f"consecutive failures this batch ({ai_circuit_reason}); skipping remaining "
+                              f"AI calls rather than hanging the batch on a broken provider.",
+                    )
+                else:
+                    ai_result = reason_about_candidates(payment, outcome.ai_candidates)
+                    if ai_result.decision == "ERROR":
+                        ai_consecutive_failures += 1
+                        if ai_consecutive_failures >= THRESHOLDS.ai_circuit_breaker_threshold:
+                            ai_circuit_open = True
+                            ai_circuit_reason = ai_result.error or "repeated failures"
+                    else:
+                        ai_consecutive_failures = 0
                 ai_evidence = ai_result.to_evidence()
                 policy_outcome = apply_ai_policy(ai_result, outcome.ai_candidates, THRESHOLDS)
                 method = "ai"
@@ -148,7 +170,9 @@ def run_reconciliation(raw_dir: Path | None = None) -> dict:
             "status_counts": status_counts,
             "category_counts": category_counts,
             "ai_invocations": ai_invocations,
-            "ai_enabled": bool(__import__("config").AI_ENABLED),
+            "ai_circuit_breaker_tripped": ai_circuit_open,
+            "ai_circuit_breaker_reason": ai_circuit_reason or None,
+            "ai_enabled": llm_settings.get().enabled,
             "total_processing_seconds": round(elapsed, 3),
             "throughput_per_second": round(n / elapsed, 2) if elapsed > 0 else None,
             "avg_processing_ms_per_record": round(total_proc_ms / n, 3) if n else None,

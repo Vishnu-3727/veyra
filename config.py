@@ -52,6 +52,13 @@ class Thresholds:
     ai_confidence_threshold: int = 75  # AI must self-report >=75/100 confidence to action a match
     ai_hard_amount_mismatch_cap_pct: float = 0.08  # hard ceiling regardless of AI's stated confidence
 
+    # --- reliability: stop hammering a broken/unreachable provider mid-batch ---
+    # After this many consecutive AI failures (bad key, outage, network issue), the
+    # rest of the batch's AI-eligible cases skip the network call entirely and go
+    # straight to an AI_UNAVAILABLE exception -- so one bad key can't turn a 750-record
+    # batch into a multi-minute hang waiting out the per-call timeout on every case.
+    ai_circuit_breaker_threshold: int = 3
+
     # --- duplicate detection (deterministic) ---
     # Duplicate bank postings are identified by matching UTR (see app/candidates.py);
     # no fuzzy tolerance needed since a genuine double-post reuses the same UTR.
@@ -63,10 +70,14 @@ class Thresholds:
 
 THRESHOLDS = Thresholds()
 
-# --- LLM wiring ---
+# --- LLM wiring: these are only the SEED values read once at startup by
+# app/settings.py. Once the process is running, the live provider/key/model
+# are owned by app.settings (mutable, persisted to SQLite, changeable from
+# the dashboard's Settings panel without a restart) -- read config.LLM_* or
+# config.AI_ENABLED directly ONLY from app/settings.py itself.
 LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "nvidia/nemotron-nano-9b-v2:free")
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
 AI_ENABLED = bool(LLM_API_KEY)
 
