@@ -22,7 +22,7 @@ from app import db
 from app.evaluation import evaluate
 from app.pipeline import run_reconciliation
 
-app = FastAPI(title="AI Finance Controller", version="1.0")
+app = FastAPI(title="Veyra — AI Finance Controller", version="1.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )

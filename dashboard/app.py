@@ -1,4 +1,4 @@
-"""Streamlit dashboard for the AI Finance Controller.
+"""Streamlit dashboard for Veyra -- an AI Finance Controller.
 
 Talks to the FastAPI service over HTTP -- no direct DB/business-logic
 imports here, so the dashboard is a pure consumer of the same API a judge
@@ -20,7 +20,7 @@ import config
 from app import constants as C
 
 API = config.API_BASE_URL
-st.set_page_config(page_title="AI Finance Controller", layout="wide", page_icon="\U0001F9FE")
+st.set_page_config(page_title="Veyra — AI Finance Controller", layout="wide", page_icon="\U0001F9FE")
 
 # Minimal, purposeful styling only: a single accent color for primary actions
 # and monospace for identifiers (payment/bank/run ids), so they're easy to
@@ -73,7 +73,8 @@ def api_post(path: str, **params):
 # ---------------------------------------------------------------------------
 # Sidebar: dataset + reconciliation controls
 # ---------------------------------------------------------------------------
-st.sidebar.title("\U0001F9FE AI Finance Controller")
+st.sidebar.title("\U0001F9FE Veyra")
+st.sidebar.caption("AI Finance Controller")
 health, health_err = api_get("/health")
 if health_err:
     st.sidebar.error(health_err)
@@ -124,7 +125,7 @@ elif runs_err and "No runs" not in str(runs_err):
     st.sidebar.error(runs_err)
 
 if not run_id:
-    st.title("AI Finance Controller")
+    st.title("\U0001F9FE Veyra")
     st.info("No reconciliation run yet. Generate a dataset and click **Run reconciliation** in the sidebar.")
     st.stop()
 
@@ -135,7 +136,7 @@ if err:
 metrics = run_detail["metrics"]
 evaluation, eval_err = api_get(f"/runs/{run_id}/evaluation")
 
-st.title("AI Finance Controller")
+st.title("\U0001F9FE Veyra")
 st.caption(f'"We automate the financial decisions we can support with evidence, explain those decisions, '
            f'and safely surface the ones we cannot." — Run `{run_id}` · started {run_detail["started_at"]}')
 
