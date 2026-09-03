@@ -105,6 +105,17 @@ def run_evaluation(run_id: str):
     return evaluate(run_id, config.RAW_DIR)
 
 
+@app.get("/baseline")
+def baseline_comparison():
+    """Naive closest-amount-in-window matcher, scored the same way, for a
+    direct, quantified comparison against the guardrailed engine."""
+    if not (config.RAW_DIR / "payments.csv").exists():
+        raise HTTPException(400, "No dataset found. Call POST /dataset/generate first.")
+    from app.baseline import compute_naive_baseline
+
+    return compute_naive_baseline(config.RAW_DIR)
+
+
 @app.get("/decisions")
 def list_decisions(
     run_id: Optional[str] = None,

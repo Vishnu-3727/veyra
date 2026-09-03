@@ -22,6 +22,21 @@ from app import constants as C
 API = config.API_BASE_URL
 st.set_page_config(page_title="AI Finance Controller", layout="wide", page_icon="\U0001F9FE")
 
+# Minimal, purposeful styling only: a single accent color for primary actions
+# and monospace for identifiers (payment/bank/run ids), so they're easy to
+# scan and copy during a live demo. No decoration that competes with the data.
+st.markdown(
+    """
+    <style>
+    div[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+    code, .stCode, div[data-testid="stMarkdownContainer"] code { font-size: 0.85em; }
+    button[kind="primary"] { background-color: #0a3d91; border-color: #0a3d91; }
+    button[kind="primary"]:hover { background-color: #0c4bb3; border-color: #0c4bb3; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def fmt_amount(value) -> str:
     """Rupee-format an amount, tolerating None/corrupt values (e.g. a payment
@@ -72,7 +87,7 @@ else:
 st.sidebar.subheader("1. Synthetic dataset")
 seed = st.sidebar.number_input("Seed", value=config.RANDOM_SEED, step=1)
 size = st.sidebar.number_input("Payment records", value=config.DATASET_SIZE, step=50, min_value=10, max_value=20000)
-if st.sidebar.button("Generate dataset", use_container_width=True):
+if st.sidebar.button("Generate dataset", width="stretch"):
     with st.spinner("Generating synthetic multi-source dataset..."):
         result, err = api_post("/dataset/generate", seed=int(seed), size=int(size))
     if err:
@@ -83,7 +98,7 @@ if st.sidebar.button("Generate dataset", use_container_width=True):
                             f"{result['invoices']} invoices.")
 
 st.sidebar.subheader("2. Reconciliation")
-if st.sidebar.button("Run reconciliation", type="primary", use_container_width=True):
+if st.sidebar.button("Run reconciliation", type="primary", width="stretch"):
     with st.spinner("Ingesting, matching, and reasoning over the batch..."):
         result, err = api_post("/reconcile/run")
     if err:
@@ -176,14 +191,14 @@ with tab_overview:
         fig = px.pie(mix_df, names="status", values="count", hole=0.5,
                      color="status", color_discrete_map={
                          C.STATUS_AUTO_MATCH: "#2ca02c", C.STATUS_AI_ASSISTED_MATCH: "#1f77b4", C.STATUS_EXCEPTION: "#d62728"})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with col_b:
         st.subheader("Exception categories")
         cc = metrics["category_counts"]
         if cc:
             cc_df = pd.DataFrame({"category": [C.CATEGORY_LABELS.get(k, k) for k in cc], "count": list(cc.values())}).sort_values("count", ascending=True)
             fig2 = px.bar(cc_df, x="count", y="category", orientation="h")
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
         else:
             st.info("No exceptions in this run.")
 
@@ -214,7 +229,7 @@ with tab_decisions:
         df = pd.DataFrame(listing["results"])
         display_cols = ["payment_id", "customer_name", "amount", "order_id", "status", "category",
                          "matched_bank_ref", "confidence", "method", "ai_used", "reason"]
-        st.dataframe(df[display_cols], use_container_width=True, height=350)
+        st.dataframe(df[display_cols], width="stretch", height=350)
 
         st.markdown(f"Showing {len(df)} of {listing['total']} matching decisions.")
         chosen = st.selectbox("Inspect a payment", df["payment_id"].tolist())
@@ -282,7 +297,7 @@ with tab_eval:
         color_map = {"CORRECT_AUTO": "#2ca02c", "CORRECTLY_ESCALATED": "#1f77b4",
                      "MISSED_OPPORTUNITY": "#ff7f0e", "INCORRECT_AUTO": "#d62728", "UNSAFE_AUTO": "#8b0000"}
         fig = px.bar(odf, x="outcome", y="count", color="outcome", color_discrete_map=color_map)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         st.subheader("Accuracy by difficulty case type")
         rows = []
@@ -295,11 +310,39 @@ with tab_eval:
                 correct_rate = v["CORRECTLY_ESCALATED"] / unresolvable_n if unresolvable_n else None
             rows.append({"case_type": ct, "total": v["total"], "correct_rate": correct_rate, **v})
         cdf = pd.DataFrame(rows).sort_values("total", ascending=False)
-        st.dataframe(cdf, use_container_width=True)
+        st.dataframe(cdf, width="stretch")
 
         if evaluation["incorrect_auto_examples"] or evaluation["unsafe_auto_examples"]:
             st.error("Cases where automation was WRONG or UNSAFE:")
             st.json({"incorrect_auto": evaluation["incorrect_auto_examples"], "unsafe_auto": evaluation["unsafe_auto_examples"]})
+
+        st.subheader("Why this beats \"just fuzzy-match everything\"")
+        st.markdown(
+            "The naive baseline below always commits to the closest-amount bank record in the settlement "
+            "window -- no reference check, no name evidence, no duplicate detection, no ambiguity detection, "
+            "no AI, no policy caps. Same dataset, same ground truth, same scoring function -- the only "
+            "variable is evidence-gating."
+        )
+        baseline, base_err = api_get("/baseline")
+        if base_err:
+            st.warning(base_err)
+        else:
+            comp_rows = [
+                {"metric": "Automation precision", "This system": evaluation["automation_precision"], "Naive baseline": baseline["automation_precision"]},
+                {"metric": "Coverage (recall)", "This system": evaluation["coverage_recall"], "Naive baseline": baseline["coverage_recall"]},
+                {"metric": "Safety rate", "This system": evaluation["safety_rate"], "Naive baseline": baseline["safety_rate"]},
+                {"metric": "False-match rate", "This system": evaluation["false_match_rate"], "Naive baseline": baseline["false_match_rate"]},
+            ]
+            comp_df = pd.DataFrame(comp_rows)
+            fig3 = px.bar(comp_df, x="metric", y=["This system", "Naive baseline"], barmode="group",
+                          color_discrete_map={"This system": "#2ca02c", "Naive baseline": "#d62728"})
+            fig3.update_layout(yaxis_tickformat=".0%", yaxis_title=None, xaxis_title=None, legend_title=None)
+            st.plotly_chart(fig3, width="stretch")
+            b1, b2 = st.columns(2)
+            b1.metric("Naive baseline false-match rate", f"{baseline['false_match_rate']:.1%}",
+                       help="How often the naive matcher confidently reconciles the WRONG record or one that shouldn't be auto-resolved at all.")
+            b2.metric("This system's false-match rate", f"{evaluation['false_match_rate']:.1%}",
+                       delta=f"{(evaluation['false_match_rate'] - baseline['false_match_rate']):.1%}", delta_color="inverse")
 
 # ---------------------------------------------------------------------------
 # Audit trail
@@ -318,4 +361,4 @@ with tab_audit:
     else:
         adf = pd.DataFrame(audit["results"])
         cols = ["created_at", "payment_id", "actor", "status", "category", "ai_used", "confidence", "reason"]
-        st.dataframe(adf[cols], use_container_width=True, height=450)
+        st.dataframe(adf[cols], width="stretch", height=450)

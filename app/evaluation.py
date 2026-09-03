@@ -26,7 +26,7 @@ from app import constants as C
 from app import db
 
 
-def _load_ground_truth(raw_dir: Path) -> dict[str, dict]:
+def load_ground_truth(raw_dir: Path) -> dict[str, dict]:
     path = raw_dir / "ground_truth.csv"
     gt = {}
     with open(path, newline="") as f:
@@ -37,15 +37,12 @@ def _load_ground_truth(raw_dir: Path) -> dict[str, dict]:
     return gt
 
 
-def evaluate(run_id: str, raw_dir: Path) -> dict:
-    gt = _load_ground_truth(raw_dir)
-
-    with db.get_conn() as conn:
-        decisions = {
-            r["payment_id"]: dict(r)
-            for r in conn.execute("SELECT * FROM decisions WHERE run_id = ?", (run_id,)).fetchall()
-        }
-
+def score_decisions(decisions: dict[str, dict], gt: dict[str, dict]) -> dict:
+    """Score an arbitrary {payment_id: {"status": ..., "matched_bank_ref": ...}}
+    mapping against ground truth. Used both for the real engine's decisions
+    (via `evaluate`) and for the naive baseline comparison (`app/baseline.py`)
+    so both are scored with identical, unbiased logic.
+    """
     outcomes: dict[str, int] = {
         "CORRECT_AUTO": 0, "INCORRECT_AUTO": 0, "MISSED_OPPORTUNITY": 0,
         "UNSAFE_AUTO": 0, "CORRECTLY_ESCALATED": 0,
@@ -93,8 +90,7 @@ def evaluate(run_id: str, raw_dir: Path) -> dict:
     resolvable_total = outcomes["CORRECT_AUTO"] + outcomes["INCORRECT_AUTO"] + outcomes["MISSED_OPPORTUNITY"]
     unresolvable_total = outcomes["UNSAFE_AUTO"] + outcomes["CORRECTLY_ESCALATED"]
 
-    metrics = {
-        "run_id": run_id,
+    return {
         "joined_records": joined,
         "outcomes": outcomes,
         "automation_precision": round(outcomes["CORRECT_AUTO"] / automated, 4) if automated else None,
@@ -109,4 +105,14 @@ def evaluate(run_id: str, raw_dir: Path) -> dict:
         "incorrect_auto_examples": incorrect_examples,
         "unsafe_auto_examples": unsafe_examples,
     }
-    return metrics
+
+
+def evaluate(run_id: str, raw_dir: Path) -> dict:
+    gt = load_ground_truth(raw_dir)
+    with db.get_conn() as conn:
+        decisions = {
+            r["payment_id"]: dict(r)
+            for r in conn.execute("SELECT * FROM decisions WHERE run_id = ?", (run_id,)).fetchall()
+        }
+    return {"run_id": run_id, **score_decisions(decisions, gt)}
+

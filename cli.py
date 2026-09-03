@@ -51,6 +51,12 @@ def cmd_evaluate(args) -> None:
     print(json.dumps(evaluate(run_id, config.RAW_DIR), indent=2))
 
 
+def cmd_baseline(args) -> None:
+    from app.baseline import compute_naive_baseline
+
+    print(json.dumps(compute_naive_baseline(config.RAW_DIR), indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -66,6 +72,9 @@ def main() -> None:
     p_eval = sub.add_parser("evaluate", help="Evaluate a run against ground truth")
     p_eval.add_argument("--run-id", default=None, help="Defaults to the most recent run")
     p_eval.set_defaults(func=cmd_evaluate)
+
+    p_base = sub.add_parser("baseline", help="Compute the naive baseline comparison")
+    p_base.set_defaults(func=cmd_baseline)
 
     args = parser.parse_args()
     args.func(args)

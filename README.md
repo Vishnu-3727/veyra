@@ -110,6 +110,19 @@ From these: **automation precision** = `CORRECT_AUTO / (CORRECT_AUTO + INCORRECT
 
 With AI reasoning enabled (verified via a scripted stand-in LLM, since no live API key is available in this build environment -- see Limitations), the 48 AI-eligible cases (reference variations, small amount mismatches, weak-name-but-exact-amount cases) are largely recovered: coverage rises to ~99% while precision and safety remain at 100%, because the policy layer's hard 8% amount-mismatch cap and confidence floor hold regardless of how confident the AI is. The categories that *must never* auto-resolve (`amount_mismatch_large`, `missing_bank_record`, `conflicting_evidence`, `ambiguous_multiple_candidates` -- 102 records) were correctly escalated in every run, with and without AI.
 
+### Naive baseline comparison (`app/baseline.py`, `GET /baseline`, `python cli.py baseline`)
+
+To make the value of evidence-gating measurable rather than asserted, a naive baseline is scored with the *identical* evaluation function against the *identical* dataset: it always commits to the closest-amount bank record within the settlement window -- no reference check, no name evidence, no duplicate detection, no ambiguity detection, no AI, no policy caps.
+
+| Metric | This system | Naive "match everything" baseline |
+|---|---|---|
+| Automation precision | **100.0%** | 65.8% |
+| Coverage / recall | 95.4% | 75.5% |
+| Safety rate | **100.0%** | 6.9% |
+| False-match rate | **0.0%** | 34.2% |
+
+The naive matcher is confidently wrong more than a third of the time it automates, and correctly refuses only 6.9% of the cases it genuinely cannot resolve -- vs. 100% for this system, on the same 750 records. This is the concrete, measured argument for evidence-gated automation over "just fuzzy-match everything."
+
 ## Known limitations
 
 - **No live LLM verified in this build environment.** `app/ai_reasoning.py` is fully implemented against the OpenAI-compatible chat completions API and unit-tested (`tests/test_policy.py`) against synthetic AI responses covering match/no-match/hallucinated-candidate/low-confidence/over-the-cap scenarios, but end-to-end behavior with a real model has not been observed here. Add a key to `.env` (`LLM_API_KEY`) to exercise it live -- any OpenAI-compatible endpoint works.
@@ -124,7 +137,9 @@ cd finance-controller
 ./run.sh
 ```
 
-This creates a virtualenv on first run, installs dependencies, copies `.env.example` to `.env` if missing, starts the API on `:8000`, and the dashboard on `:8501`. Open **http://127.0.0.1:8501**.
+This creates a virtualenv on first run, installs dependencies, copies `.env.example` to `.env` if missing, pre-seeds Streamlit's one-time onboarding config (so it never blocks on an email prompt), starts the API on `:8000`, and the dashboard on `:8501`. Open **http://127.0.0.1:8501**.
+
+`run.sh` is idempotent and safe to re-run: if an API from a previous `./run.sh` is still alive and healthy on the same port, it's reused instead of failing with "address already in use"; a genuine port conflict fails fast with a clear message (`API_PORT=8001 ./run.sh` / `DASHBOARD_PORT=8502 ./run.sh` to work around it).
 
 To enable live AI reasoning, put a real key in `.env` before running:
 ```
@@ -140,6 +155,7 @@ source .venv/bin/activate
 python cli.py generate --seed 42 --size 750   # synthetic dataset -> data/raw/
 python cli.py run                              # ingest + reconcile, prints metrics JSON
 python cli.py evaluate                         # score the latest run against ground truth
+python cli.py baseline                         # naive-matcher comparison on the same data
 ```
 
 **API directly** (with `run.sh` or `uvicorn app.api:app --port 8000` already running):
@@ -150,6 +166,7 @@ curl 'localhost:8000/runs/latest'
 curl 'localhost:8000/runs/<run_id>/evaluation'
 curl 'localhost:8000/exceptions?run_id=<run_id>'
 curl 'localhost:8000/decisions/<payment_id>?run_id=<run_id>'
+curl 'localhost:8000/baseline'
 ```
 
 **Tests**: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/ -v` (the env-var works around unrelated third-party pytest plugins that may be globally installed on the host; it is not required in a clean environment).
@@ -161,7 +178,7 @@ curl 'localhost:8000/decisions/<payment_id>?run_id=<run_id>'
 3. **Decisions tab**: open an `exact_match` payment -> show the evidence (exact reference, exact amount, zero ambiguity, no AI needed).
 4. **Exceptions tab**: open a `conflicting_evidence` case -- reference matches exactly, amount differs by ~28% -- show the system's explanation of *why* it refused, and the suggested human action. This is the core "safe refusal" moment.
 5. **If an LLM key is configured**: run again and show an `AI_ASSISTED_MATCH` decision with the AI's reasoning text and confidence in the evidence panel; then show `evaluation.per_case_type.amount_mismatch_small` improve from `MISSED_OPPORTUNITY` to `CORRECT_AUTO`.
-6. **Evaluation tab**: the outcome bar chart -- zero red (`INCORRECT_AUTO`/`UNSAFE_AUTO`) bars is the headline: automation happened everywhere it safely could, and nowhere it couldn't.
+6. **Evaluation tab**: the outcome bar chart -- zero red (`INCORRECT_AUTO`/`UNSAFE_AUTO`) bars is the headline: automation happened everywhere it safely could, and nowhere it couldn't. Scroll to **"Why this beats 'just fuzzy-match everything'"** -- a naive closest-amount matcher scored on the identical dataset has a 34.2% false-match rate and a 6.9% safety rate, vs. 0.0% / 100% here. This is the single most convincing slide for judges: same data, same scoring, the only variable is evidence-gating.
 7. **Audit Trail tab**: filter by the payment_id shown earlier -- one row, fully explaining the decision, actor, and evidence.
 
 ## Remaining high-value improvements (not done, out of 3-day scope)
