@@ -10,7 +10,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
-![Streamlit](https://img.shields.io/badge/dashboard-Streamlit-FF4B4B)
+![Frontend](https://img.shields.io/badge/frontend-vanilla%20JS%2C%20no%20build%20step-6ea8ea)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Tests](https://img.shields.io/badge/tests-9%20passing-brightgreen)
 
@@ -40,6 +40,8 @@ Most reconciliation demos show automation. Veyra shows automation **and proves i
 | False-match rate | **0.0%** | 34.2% |
 
 A naive fuzzy-matcher is confidently *wrong* more than a third of the time it automates. Veyra automates 82.4% of a 750-record batch with **zero** false or unsafe matches — and shows its work for every single one. See it live in the [Evaluation tab](docs/screenshots/evaluation.png).
+
+The frontend is also a deliberate choice, not an afterthought: no Streamlit, no default component-library theme. It's a hand-built static UI (`web/`, vanilla HTML/CSS/JS, zero build step) with its own visual identity — a warm near-black "audit ledger" palette, a serif display face for headings, monospace for every number and identifier — because a finance-control product should look like one, not like a generic AI-chatbot template.
 
 ## Table of contents
 
@@ -80,12 +82,14 @@ app/pipeline.py                 orchestrates the above, persists decisions/audit
 app/evaluation.py               scores decisions against ground truth (never seen by the engine itself)
 app/baseline.py                 naive-matcher comparison, scored with the identical function
         v
-app/api.py (FastAPI)  <-----> dashboard/app.py (Streamlit)
+app/api.py (FastAPI)  <-----> web/ (static HTML/CSS/JS frontend, zero build step)
 ```
 
-Every box is a small, independently-testable module. No queues, no vector DB, no agent framework — a single SQLite file and ~12 focused Python modules are enough to make the guarantees above hold at 750+ records/run.
+Every box is a small, independently-testable module. No queues, no vector DB, no agent framework, no frontend build pipeline — a single SQLite file and ~12 focused Python modules are enough to make the guarantees above hold at 750+ records/run.
 
 **Why this workflow:** multi-source reconciliation is the highest-leverage finance-ops workflow to automate *safely* — the cost of a false match (money reconciled against the wrong transaction) is much higher than the cost of a delayed review, so the entire design optimizes for **precision and safety over raw automation rate**.
+
+**Why a hand-built frontend instead of Streamlit:** Streamlit is excellent for internal tools but every Streamlit app shares the same sidebar-plus-widgets skeleton and default theme -- instantly recognizable, and forgettable in a room full of hackathon demos. `web/` is ~700 lines of vanilla HTML/CSS/JS (no React, no bundler, no npm install) that talks to the same FastAPI backend over `fetch()`. It gets a real design system (color tokens, a serif display face, monospace data), a slide-over evidence drawer instead of a raw `st.json()` dump, and full control over layout -- for less code than wiring Streamlit's theming API to fight its defaults.
 
 ## How reconciliation works
 
@@ -164,13 +168,13 @@ To make the value of evidence-gating measurable rather than asserted, a naive ba
 
 ## Screenshots
 
-| Overview | Evaluation vs. baseline |
+| Overview | Decision detail drawer |
 |---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Evaluation](docs/screenshots/evaluation.png) |
+| ![Overview](docs/screenshots/overview.png) | ![Decision detail](docs/screenshots/decision-detail.png) |
 
-| Exception queue |
-|---|
-| ![Exceptions](docs/screenshots/exceptions.png) |
+| Exception queue | Evaluation vs. naive baseline |
+|---|---|
+| ![Exceptions](docs/screenshots/exceptions.png) | ![Evaluation](docs/screenshots/evaluation.png) |
 
 ## How to run
 
@@ -180,7 +184,7 @@ cd Veyra---FIntech
 ./run.sh
 ```
 
-This creates a virtualenv on first run, installs dependencies, copies `.env.example` to `.env` if missing, pre-seeds Streamlit's one-time onboarding config (so it never blocks on an email prompt), starts the API on `:8000`, and the dashboard on `:8501`. Open **http://127.0.0.1:8501**.
+This creates a virtualenv on first run, installs dependencies, copies `.env.example` to `.env` if missing, starts the API on `:8000`, and serves the static frontend on `:8501`. Open **http://127.0.0.1:8501**.
 
 `run.sh` is idempotent and safe to re-run: if an API from a previous `./run.sh` is still alive and healthy on the same port, it's reused instead of failing with "address already in use"; a genuine port conflict fails fast with a clear message (`API_PORT=8001 ./run.sh` / `DASHBOARD_PORT=8502 ./run.sh` to work around it).
 
@@ -250,7 +254,7 @@ app/
   evaluation.py            ground-truth scoring
   baseline.py              naive-matcher comparison
   api.py                   FastAPI service
-dashboard/app.py           Streamlit dashboard
+web/                      static frontend: index.html, styles.css, app.js (zero build step)
 tests/                     policy guardrail + ingestion robustness tests
 ```
 

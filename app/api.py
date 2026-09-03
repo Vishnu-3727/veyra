@@ -44,6 +44,25 @@ def health():
     return {"status": "ok", "ai_enabled": config.AI_ENABLED, "llm_model": config.LLM_MODEL if config.AI_ENABLED else None}
 
 
+@app.get("/meta")
+def meta():
+    """Shared vocabulary (status/category labels) so the frontend never
+    hardcodes a second copy of text that could drift from app/constants.py."""
+    return {
+        "statuses": {
+            C.STATUS_AUTO_MATCH: "Auto-matched (rule)",
+            C.STATUS_AI_ASSISTED_MATCH: "AI-assisted match",
+            C.STATUS_EXCEPTION: "Exception",
+        },
+        "category_labels": C.CATEGORY_LABELS,
+        "thresholds": {
+            "ai_confidence_threshold": config.THRESHOLDS.ai_confidence_threshold,
+            "ai_hard_amount_mismatch_cap_pct": config.THRESHOLDS.ai_hard_amount_mismatch_cap_pct,
+            "settlement_window_days": config.THRESHOLDS.settlement_window_days,
+        },
+    }
+
+
 @app.post("/dataset/generate")
 def generate_dataset(seed: int = config.RANDOM_SEED, size: int = config.DATASET_SIZE):
     if size < 1 or size > 20000:
