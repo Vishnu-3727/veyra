@@ -7,36 +7,33 @@ serialization, and input validation at the boundary.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from app import constants as C
 from app import db
 from app import settings as llm_settings
 from app.evaluation import evaluate
+from app.generate_dataset import generate
 from app.pipeline import run_reconciliation
 
-app = FastAPI(title="Veyra — AI Finance Controller", version="1.0")
+app = FastAPI(title="LedgerProof — AI Finance Controller", version="1.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
 
 def _row(r) -> dict:
+    """Row as a dict, with evidence_json decoded into an `evidence` object."""
     d = dict(r)
-    for key in ("evidence_json",):
-        if key in d and d[key]:
-            try:
-                d[key.replace("_json", "")] = json.loads(d.pop(key))
-            except (json.JSONDecodeError, TypeError):
-                pass
+    if d.get("evidence_json"):
+        try:
+            d["evidence"] = json.loads(d.pop("evidence_json"))
+        except (json.JSONDecodeError, TypeError):
+            pass
     return d
 
 
@@ -99,11 +96,7 @@ def update_settings(
 def generate_dataset(seed: int = config.RANDOM_SEED, size: int = config.DATASET_SIZE):
     if size < 1 or size > 20000:
         raise HTTPException(400, "size must be between 1 and 20000")
-    sys.path.insert(0, str(config.BASE_DIR / "data"))
-    from generate_dataset import generate  # local import to avoid module name clashes at startup
-
-    summary = generate(seed, size, config.RAW_DIR)
-    return summary
+    return generate(seed, size, config.RAW_DIR)
 
 
 @app.post("/reconcile/run")
@@ -129,11 +122,7 @@ def list_runs(limit: int = 20):
 
 @app.get("/runs/latest")
 def latest_run():
-    with db.get_conn() as conn:
-        row = conn.execute("SELECT run_id FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
-    if not row:
-        raise HTTPException(404, "No runs yet. Call POST /reconcile/run first.")
-    return {"run_id": row["run_id"]}
+    return {"run_id": _resolve_latest_run_id()}
 
 
 @app.get("/runs/{run_id}")
@@ -277,11 +266,10 @@ def list_audit(run_id: Optional[str] = None, payment_id: Optional[str] = None, l
 
 
 def _resolve_latest_run_id() -> str:
-    with db.get_conn() as conn:
-        row = conn.execute("SELECT run_id FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
-    if not row:
+    run_id = db.latest_run_id()
+    if not run_id:
         raise HTTPException(404, "No runs yet. Call POST /reconcile/run first.")
-    return row["run_id"]
+    return run_id
 
 
 @app.on_event("startup")

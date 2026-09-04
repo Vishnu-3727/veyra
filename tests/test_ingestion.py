@@ -1,9 +1,4 @@
 """Tests for graceful handling of malformed/missing input at the ingestion boundary."""
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import pytest
 
 from app import db
@@ -65,3 +60,27 @@ def test_empty_bank_file_does_not_crash_ingestion(tmp_path, tmp_db):
     reports = ingest_all(tmp_path)
     assert reports["bank_settlements"].rows_read == 0
     assert reports["invoices"].rows_read == 0
+
+
+def test_row_without_a_primary_key_is_dropped_not_guessed(tmp_path, tmp_db):
+    (tmp_path / "payments.csv").write_text(
+        "payment_id,order_id,amount,currency,method,customer_name,customer_email,created_at,status,description\n"
+        "pay_ok,order_1,100.00,INR,upi,Alice,alice@x.com,2026-08-01T10:00:00,captured,ok\n"
+        ",order_2,100.00,INR,upi,Bob,bob@x.com,2026-08-01T10:00:00,captured,no id\n"
+    )
+    (tmp_path / "bank_settlements.csv").write_text(
+        "bank_ref,utr,settlement_date,amount,narration,payer_name,reference_hint\n"
+        ",UTR1,2026-08-02,100.00,NEFT/UTR1,Alice,order1\n"
+    )
+    (tmp_path / "invoices.csv").write_text(
+        "invoice_id,order_id,amount,customer_name,invoice_date,description,status\n"
+    )
+
+    reports = ingest_all(tmp_path)
+    assert reports["payments"].rows_invalid == 1
+    assert reports["payments"].errors == ["row skipped: missing payment_id"]
+    assert reports["bank_settlements"].errors == ["row skipped: missing bank_ref"]
+
+    with db.get_conn() as conn:
+        assert [r["payment_id"] for r in conn.execute("SELECT payment_id FROM payments")] == ["pay_ok"]
+        assert conn.execute("SELECT COUNT(*) c FROM bank_settlements").fetchone()["c"] == 0

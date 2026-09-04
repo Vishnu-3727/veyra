@@ -15,7 +15,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 import config
 
@@ -141,6 +141,13 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         conn.commit()
     finally:
         conn.close()
+
+
+def latest_run_id() -> Optional[str]:
+    """Most recently started run, or None if nothing has been run yet."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT run_id FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
+    return row["run_id"] if row else None
 
 
 def reset_source_tables(conn: sqlite3.Connection) -> None:

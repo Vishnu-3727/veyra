@@ -16,7 +16,7 @@ instance and a fixed anchor date, so re-running with the same seed/size
 reproduces byte-identical output.
 
 Usage:
-    python data/generate_dataset.py --seed 42 --size 750 --out-dir data/raw
+    python -m app.generate_dataset --seed 42 --size 750 --out-dir data/raw
 """
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ import csv
 import json
 import random
 import string
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -495,7 +494,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic multi-source reconciliation dataset")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--size", type=int, default=750)
-    parser.add_argument("--out-dir", type=Path, default=Path(__file__).parent / "raw")
+    parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "raw")
     args = parser.parse_args()
 
     summary = generate(args.seed, args.size, args.out_dir)

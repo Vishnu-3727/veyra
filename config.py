@@ -65,7 +65,6 @@ class Thresholds:
 
     # --- invoice corroboration (secondary evidence, not primary match target) ---
     invoice_amount_tolerance_pct: float = 0.01
-    invoice_date_window_days: int = 10
 
 
 THRESHOLDS = Thresholds()
@@ -80,11 +79,6 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "nvidia/nemotron-nano-9b-v2:free")
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
 AI_ENABLED = bool(LLM_API_KEY)
-
-# --- API / dashboard wiring ---
-API_HOST = os.getenv("API_HOST", "127.0.0.1")
-API_PORT = int(os.getenv("API_PORT", "8000"))
-API_BASE_URL = os.getenv("API_BASE_URL", f"http://{API_HOST}:{API_PORT}")
 
 # --- dataset generation ---
 RANDOM_SEED = int(os.getenv("DATASET_SEED", "42"))

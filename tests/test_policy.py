@@ -1,11 +1,6 @@
 """Tests for the policy guardrail layer -- the boundary that stops an
 unsupported AI response from becoming a financial decision.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from app import constants as C
 from app.ai_reasoning import AIResult
 from app.candidates import Candidate

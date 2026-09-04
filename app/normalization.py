@@ -97,17 +97,16 @@ def parse_date(value) -> Optional[date]:
         return None
 
 
-def ref_fragment(reference_id: str, min_len: int = 4) -> str:
+def ref_fragment(reference_id: str) -> str:
     """Normalized reference with common prefixes stripped, for substring matching."""
     r = normalize_ref(reference_id)
     for prefix in ("ORDER", "PAY", "ORD", "INV"):
         if r.startswith(prefix):
-            r = r[len(prefix):]
-            break
-    return r if len(r) >= min_len else r
+            return r[len(prefix):]
+    return r
 
 
-def ref_match_type(order_id: str, payment_id: str, *bank_texts: str) -> str:
+def ref_match_type(order_id: str, *bank_texts: str) -> str:
     """Classify how strongly a payment's identifiers appear in bank-side text.
 
     Returns "EXACT", "PARTIAL", or "NONE". EXACT requires the full order

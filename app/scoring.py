@@ -100,7 +100,7 @@ def decide_deterministic(candidates: list[Candidate], thresholds: Thresholds) ->
             reason="No bank settlement record was found within the settlement window or via reference match.",
         )
 
-    dup_group = find_duplicate_group(candidates, thresholds)
+    dup_group = find_duplicate_group(candidates)
     duplicate_extra_refs = [c.bank_ref for c in dup_group[1:]] if dup_group else []
     if dup_group:
         dup_set = {c.bank_ref for c in dup_group}

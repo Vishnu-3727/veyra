@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Veyra — Financial Control Center</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>§</text></svg>">
+<title>LedgerProof — Financial Control Center</title>
+<meta name="description" content="LedgerProof — evidence-driven financial reconciliation. Match what you can prove. Surface what you can't.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23090908%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22%23D9A441%22 font-family=%22monospace%22>L</text></svg>">
 <link rel="stylesheet" href="styles.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
@@ -14,96 +15,211 @@
 
 <!-- ============================= LANDING ============================= -->
 <section class="landing" id="landing">
-  <div class="landing-mark">VEYRA</div>
-  <h1>Financial reconciliation,<br>with evidence.</h1>
-  <p class="sub">Automate what you can prove. Surface what you can't. A control system for merchant finance operations — not a chatbot.</p>
-  <button class="btn btn-primary btn-lg" id="btnEnter">Open Control Center →</button>
-  <div class="landing-flow">
-    <span class="node">Payment</span><span class="arrow">→</span>
-    <span class="node">Evidence</span><span class="arrow">→</span>
-    <span class="node">Decision</span><span class="arrow">→</span>
-    <span class="node">Match / Exception</span>
+
+  <nav class="landing-nav">
+    <div class="mark"><span class="dot">§</span>LEDGERPROOF</div>
+    <div class="links">
+      <a href="#moment-split">How it works</a>
+      <a href="#moment-evaluation">Results</a>
+      <button class="btn btn-primary" id="btnEnter">Open Control Center</button>
+    </div>
+  </nav>
+
+  <div class="landing-hero">
+    <div class="hero-grid">
+      <div class="hero-copy">
+        <div class="landing-mark"><span class="dot">§</span>Financial Control</div>
+        <h1>Financial reconciliation,<br>with evidence.</h1>
+        <p class="quote">&ldquo;<b>Match what you can prove.</b> Surface what you can&rsquo;t.&rdquo; A control system for merchant finance operations — not a chatbot.</p>
+        <div class="landing-cta-row">
+          <button class="btn btn-primary btn-lg" id="btnEnter">Open Control Center →</button>
+          <a class="btn btn-ghost btn-lg" href="#moment-split">See how it works</a>
+        </div>
+        <div class="landing-status-line" id="landingStatusLine"></div>
+      </div>
+      <div class="hero-preview" id="heroPreview">
+        <div class="hero-preview-card" id="heroPreviewCard">
+          <div class="hero-preview-chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">ledgerproof.app/overview</span></div>
+          <div class="hero-preview-body" id="heroPreviewBody">
+            <div class="hpv-kpis">
+              <div class="hpv-kpi"><div class="l">Records</div><div class="v">—</div></div>
+              <div class="hpv-kpi"><div class="l">Reconciled</div><div class="v">—</div></div>
+            </div>
+            <div class="hpv-bar" id="hpvBar"></div>
+            <div class="hpv-row"><span class="d" style="background:var(--text-faint)"></span>loading run data…</div>
+            <div class="hpv-row"><span class="d" style="background:var(--text-faint)"></span>loading run data…</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="landing-stats" id="landingStats">
-    <div class="stat"><b>—</b><span>records processed</span></div>
-    <div class="stat"><b>—</b><span>automation precision</span></div>
-    <div class="stat"><b>—</b><span>false matches</span></div>
+
+  <section class="scrolly landing-moment" id="moment-split" style="height:400vh">
+    <div class="scrolly-pin">
+      <div class="moment-stage" id="momentSplitIntro">
+        <div class="landing-eyebrow reveal">01 · Financial data</div>
+        <div class="moment-big-num" id="momentSplitTotal">—</div>
+        <div class="moment-big-label">financial records enter LedgerProof</div>
+      </div>
+      <div class="moment-stage" id="momentSplitResult">
+        <div class="landing-eyebrow reveal">02 · Decision</div>
+        <div class="split-row">
+          <div class="split-col safe"><div class="moment-big-num" id="momentSplitSafe">—</div><div class="moment-big-label">safe to automate</div></div>
+          <div class="split-col review"><div class="moment-big-num" id="momentSplitReview">—</div><div class="moment-big-label">require review</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scrolly landing-moment" id="moment-evidence" style="height:500vh">
+    <div class="scrolly-pin">
+      <div class="moment-evidence-layout">
+        <div class="moment-evidence-left">
+          <div class="landing-eyebrow reveal">03 · Evidence</div>
+          <h2 class="reveal" style="font-size:36px;margin:0 0 var(--sp-3)">Why did LedgerProof trust this one?</h2>
+          <p class="moment-fallback muted">Run reconciliation to see a real example here.</p>
+          <div id="momentEvidenceTxn" class="moment-txn-card"></div>
+        </div>
+        <div class="moment-evidence-right" id="momentEvidenceRows"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scrolly landing-moment" id="moment-exception" style="height:350vh">
+    <div class="scrolly-pin">
+      <div class="moment-evidence-layout">
+        <div class="moment-evidence-left">
+          <div class="landing-eyebrow reveal" style="color:var(--error)">04 · But what about this?</div>
+          <h2 class="reveal" style="font-size:36px;margin:0 0 var(--sp-3)">LedgerProof doesn&rsquo;t force uncertain matches.</h2>
+          <p class="moment-fallback muted">Run reconciliation to see a real example here.</p>
+          <div id="momentExceptionTxn" class="moment-txn-card"></div>
+        </div>
+        <div class="moment-evidence-right" id="momentExceptionRows"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scrolly landing-moment" id="moment-evaluation">
+    <div class="scrolly-pin" style="height:100vh">
+      <div class="landing-eyebrow reveal">05 · Proof</div>
+      <h2 class="reveal" style="font-size:36px;text-align:center;margin:0 0 var(--sp-8)">Measured, not claimed.</h2>
+      <div class="moment-eval-grid" id="momentEvalGrid">
+        <div class="moment-eval-cell"><div class="moment-eval-num" id="momentEvalPrecision">—</div><div class="moment-eval-label">precision</div></div>
+        <div class="moment-eval-cell"><div class="moment-eval-num" id="momentEvalSafety">—</div><div class="moment-eval-label">safety rate</div></div>
+        <div class="moment-eval-cell"><div class="moment-eval-num" id="momentEvalFalse">—</div><div class="moment-eval-label">false matches</div></div>
+      </div>
+      <a class="btn btn-primary btn-lg" href="#" id="momentEvalCta" style="margin-top:var(--sp-8)">See full evaluation →</a>
+    </div>
+  </section>
+
+  <div class="landing-final">
+    <h3>See the evidence for every decision.</h3>
+    <button class="btn btn-primary btn-lg" id="btnEnterFinal">Open Control Center →</button>
   </div>
+
+  <div class="landing-foot">LedgerProof — evidence-driven financial reconciliation, built for a fintech buildathon.</div>
 </section>
 
 <!-- ============================= APP SHELL ============================= -->
+<div class="sidebar-scrim" id="sidebarScrim"></div>
 <div class="app hidden" id="app">
 
   <aside class="sidebar">
-    <div class="sidebar-brand">Veyra</div>
-    <div class="sidebar-tag">Financial Control Center</div>
+    <div class="sidebar-head">
+      <div class="sidebar-brand"><span class="mark-dot">§</span><span class="label">LedgerProof</span></div>
+      <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar">⟨⟩</button>
+    </div>
+    <div class="sidebar-tag">Financial Control</div>
 
     <div class="nav-section-label">Control Center</div>
-    <div class="nav-item active" data-view="overview">Overview</div>
-    <div class="nav-item" data-view="reconciliation">Reconciliation</div>
-    <div class="nav-item" data-view="exceptions">Exceptions <span class="count" id="excCount"></span></div>
-    <div class="nav-item" data-view="evaluation">Evaluation</div>
-    <div class="nav-item" data-view="audit">Audit Trail</div>
+    <div class="nav-item active" data-view="overview"><svg class="icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span class="label">Overview</span></div>
+    <div class="nav-item" data-view="reconciliation"><svg class="icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3"/><path d="M20 17H7l3 3"/></svg><span class="label">Reconciliation</span></div>
+    <div class="nav-item" data-view="exceptions"><svg class="icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l10 18H2z"/><path d="M12 9v5"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg><span class="label">Exceptions</span> <span class="count" id="excCount"></span></div>
+    <div class="nav-item" data-view="evaluation"><svg class="icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg><span class="label">Evaluation</span></div>
+    <div class="nav-item" data-view="audit"><svg class="icon nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v3H9z"/><path d="M8 11h8M8 14h8M8 17h5"/></svg><span class="label">Audit Trail</span></div>
 
     <div class="sidebar-system">
       <div class="nav-section-label">System</div>
-      <div class="system-row"><span class="system-dot" id="dotAI"></span> AI Engine</div>
-      <div class="system-row"><span class="system-dot on"></span> Data Pipeline</div>
-      <div class="system-row"><span class="system-dot on"></span> Rules Engine</div>
-      <div class="demo-mode-badge">Demo Mode — synthetic data</div>
+      <div class="system-row"><span class="system-dot" id="dotAI"></span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></svg> <span class="label">AI Engine</span><span class="system-row-status" id="statusAI">checking</span></div>
+      <div class="system-row"><span class="system-dot on"></span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg> <span class="label">Rule Engine</span><span class="system-row-status" id="statusRule">ACTIVE</span></div>
+      <div class="system-row"><span class="system-dot on"></span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg> <span class="label">Data Pipeline</span><span class="system-row-status" id="statusPipeline">READY</span></div>
+      <div class="system-row"><span class="system-dot on"></span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v3H9z"/><path d="M8 11h8M8 14h8M8 17h5"/></svg> <span class="label">Demo Mode</span><span class="system-row-status">ACTIVE</span></div>
     </div>
   </aside>
 
   <div class="main-col">
     <header class="topbar">
-      <div class="topbar-title" id="topbarTitle">Overview</div>
+      <div class="topbar-left">
+        <button class="mobile-nav-toggle" id="mobileNavToggle" title="Menu">☰</button>
+        <div class="topbar-title" id="topbarTitle">Overview</div>
+      </div>
       <div class="topbar-right">
-        <span class="status-pill" id="aiStatusPill" title="Click to configure the AI provider" style="cursor:pointer"><span class="status-dot"></span><span id="aiStatusText">checking…</span></span>
+        <button class="btn btn-primary" id="btnNewReconciliation">New reconciliation</button>
+        <div class="system-status-block" id="systemStatusBlock">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
+          <div class="stack">
+            <div class="line1"><span class="dot"></span><span id="systemStatusText">checking…</span></div>
+            <div class="line2"><span>Demo Dataset</span> · <span id="systemLastRun">—</span></div>
+          </div>
+        </div>
+        <span class="status-pill" id="aiStatusPill" title="Click to configure the AI provider"><span class="status-dot"></span><span id="aiStatusText">checking…</span></span>
         <select class="field" id="runSelect" style="min-width:190px"></select>
       </div>
     </header>
 
     <div class="content">
-      <div class="control-row" style="margin-bottom:26px">
-        <div class="field"><label>Seed</label><input type="number" id="seedInput" value="42"></div>
-        <div class="field"><label>Payment records</label><input type="number" id="sizeInput" value="750" step="50"></div>
-        <button class="btn" id="btnGenerate">Generate dataset</button>
-        <button class="btn btn-primary" id="btnRun">Run reconciliation</button>
-        <span class="muted mono" id="controlStatus" style="font-size:12px;margin-left:4px"></span>
+      <div class="api-banner" id="apiOfflineBanner">
+        <span><b>Backend unreachable.</b> Start it with <code class="mono">./run.sh</code> and check the API target in the footer.</span>
+        <button class="btn" id="btnRetryApi">Retry</button>
       </div>
+
+
 
       <!-- ============================= OVERVIEW ============================= -->
       <section class="view active" id="view-overview">
         <h2 class="section-title">Financial Control Center</h2>
         <p class="section-desc" id="overviewCaption">Evidence-driven reconciliation for merchant finance operations.</p>
+        <div class="section-status-line" id="overviewStatusLine"></div>
+        <div class="section-actions">
+          <button class="btn btn-primary" id="btnRunHero">Run reconciliation</button>
+          <a class="btn btn-ghost" href="#" data-goto="audit">View audit trail</a>
+        </div>
         <div id="circuitBreakerWarning" style="display:none"></div>
 
-        <div class="hero-kpi-grid" id="heroKpis"></div>
-        <div class="slim-stats" id="slimStats"></div>
-
-        <div class="proof-strip" id="proofStrip" style="display:none">
-          <div class="proof-item"><span class="proof-num mono" style="color:var(--emerald)" id="proofUs">0.0%</span><span class="proof-label">Veyra false-match rate</span></div>
-          <span class="proof-vs">vs.</span>
-          <div class="proof-item"><span class="proof-num mono" style="color:var(--red)" id="proofBaseline">34.2%</span><span class="proof-label">naive "closest-amount" baseline</span></div>
-          <span class="proof-text">Same dataset, same scoring function — the only variable is evidence-gating. <a href="#" data-goto="evaluation" style="color:var(--brass-text)">Full comparison →</a></span>
+        <div class="empty-state" id="overviewEmpty" style="display:none">
+          <div class="es-title">No reconciliation run</div>
+          <div class="es-body">Generate a synthetic dataset and run reconciliation to populate the control center.</div>
+          <button class="btn btn-primary" id="btnGenerateEmpty">Generate &amp; run</button>
         </div>
 
-        <div class="panel">
-          <div class="panel-head"><h4>Reconciliation confidence</h4></div>
-          <div class="prop-bar-wrap">
-            <div class="prop-bar" id="propBar"></div>
-            <div class="prop-legend" id="propLegend"></div>
-          </div>
-        </div>
+        <div id="overviewData">
+          <div class="hero-kpi-grid" id="heroKpis"></div>
+          <div class="metric-secondary-grid" id="slimStats"></div>
 
-        <div class="two-col" style="margin-top:16px">
-          <div class="panel">
-            <div class="panel-head"><h4>Why did records become exceptions?</h4></div>
-            <div class="reason-list" id="reasonList"></div>
+          <div class="proof-strip" id="proofStrip" style="display:none">
+            <div class="proof-item"><span class="proof-num mono" style="color:var(--success)" id="proofUs">0.0%</span><span class="proof-label">LedgerProof false-match rate</span></div>
+            <span class="proof-vs">vs.</span>
+            <div class="proof-item"><span class="proof-num mono" style="color:var(--error)" id="proofBaseline">34.2%</span><span class="proof-label">naive "closest-amount" baseline</span></div>
+            <span class="proof-text">Same dataset, same scoring function — the only variable is evidence-gating. <a href="#" data-goto="evaluation" style="color:var(--accent-bright)">Full comparison →</a></span>
           </div>
+
           <div class="panel">
-            <div class="panel-head"><h4>Recent decisions</h4><a class="link" href="#" data-goto="reconciliation">View all →</a></div>
-            <table class="data-table table-plain" id="recentTable"><thead></thead><tbody></tbody></table>
+            <div class="panel-head"><h4>Reconciliation confidence</h4></div>
+            <div class="prop-bar-wrap">
+              <div class="prop-bar" id="propBar"></div>
+              <div class="prop-legend" id="propLegend"></div>
+            </div>
+          </div>
+
+          <div class="two-col" style="margin-top:var(--sp-4)">
+            <div class="panel">
+              <div class="panel-head"><h4>Why did records become exceptions?</h4></div>
+              <div class="reason-list" id="reasonList"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h4>Recent decisions</h4><a class="link" href="#" data-goto="reconciliation">View all →</a></div>
+              <table class="data-table table-plain" id="recentTable"><thead></thead><tbody></tbody></table>
+            </div>
           </div>
         </div>
       </section>
@@ -111,8 +227,8 @@
       <!-- ============================= RECONCILIATION ============================= -->
       <section class="view" id="view-reconciliation">
         <h2 class="section-title">Reconciliation</h2>
-        <p class="section-desc" id="reconCaption">Every payment, matched against bank settlements and invoices. Click a row to see the evidence behind the decision.</p>
-        <div class="control-row" style="margin-bottom:16px">
+        <p class="section-desc" id="reconCaption">Process financial records against available evidence. Click a row to see the evidence behind the decision.</p>
+        <div class="control-row" style="margin-bottom:var(--sp-4)">
           <div class="field"><label>Status</label><select id="filterStatus"><option value="">All</option></select></div>
           <div class="field"><label>Category</label><select id="filterCategory"><option value="">All</option></select></div>
           <span class="muted mono" id="decisionsCount" style="font-size:12px;padding-bottom:8px"></span>
@@ -122,20 +238,22 @@
 
       <!-- ============================= EXCEPTIONS ============================= -->
       <section class="view" id="view-exceptions">
-        <h2 class="section-title">Exception queue</h2>
-        <p class="section-desc">Every unresolved case, with what was attempted, what conflicted, and a concrete suggested next action for a human reviewer.</p>
-        <div class="control-row" style="margin-bottom:16px">
-          <div class="field"><label>Category</label><select id="excFilterCategory"><option value="">All</option></select></div>
+        <h2 class="section-title">Exceptions</h2>
+        <p class="section-desc" id="excHeaderCount">No exceptions to review.</p>
+        <div class="hero-kpi-grid" id="excSummary"></div>
+        <div class="control-row" style="margin-bottom:var(--sp-4)">
+          <div class="chip-row" id="excFilterChips"></div>
         </div>
         <div id="exceptionsList"></div>
       </section>
 
       <!-- ============================= EVALUATION ============================= -->
       <section class="view" id="view-evaluation">
-        <h2 class="section-title">Evaluation against known ground truth</h2>
-        <p class="section-desc">Every ground-truth payment is classified as either <strong>safely resolvable</strong> (a correct answer exists in the evidence) or <strong>not safely resolvable</strong> (no system — human or AI — could determine a unique correct answer). Veyra is scored on both correctness AND safety.</p>
+        <h2 class="section-title">Evaluation</h2>
+        <p class="section-desc">Measured against known ground truth. Every ground-truth payment is classified as either <strong>safely resolvable</strong> (a correct answer exists in the evidence) or <strong>not safely resolvable</strong> (no system — human or AI — could determine a unique correct answer). LedgerProof is scored on both correctness AND safety.</p>
 
         <div class="hero-kpi-grid" id="evalHeroKpis"></div>
+        <div class="zero-banner" id="evalZeroBanner" style="display:none"></div>
 
         <div class="panel">
           <div class="panel-head"><h4>Outcome breakdown</h4></div>
@@ -143,9 +261,9 @@
         </div>
 
         <div class="panel">
-          <h4 style="margin:0 0 4px;font-size:15px;font-family:var(--font-display);font-weight:500">Same dataset. Same evaluation function. Different decision policy.</h4>
-          <p class="muted" style="font-size:13px;max-width:760px">The naive baseline always commits to the closest-amount bank record in the settlement window — no reference check, no name evidence, no duplicate detection, no ambiguity detection, no AI, no policy caps.</p>
-          <table class="data-table table-plain" id="baselineTable" style="margin-top:10px"><thead></thead><tbody></tbody></table>
+          <h4 style="margin:0 0 4px;font-size:15px;font-weight:600">LedgerProof vs. naive matching</h4>
+          <p class="muted" style="font-size:13px;max-width:760px;margin-bottom:var(--sp-4)">Same dataset. Same evaluation function. Different decision policy. The naive baseline always commits to the closest-amount bank record in the settlement window — no reference check, no name evidence, no duplicate detection, no ambiguity detection, no AI, no policy caps.</p>
+          <div id="baselineCompare"></div>
         </div>
 
         <div class="panel">
@@ -158,14 +276,14 @@
       <section class="view" id="view-audit">
         <h2 class="section-title">Audit trail</h2>
         <p class="section-desc">Immutable, append-only log of every decision: source records, actor, evidence, confidence, and timestamp.</p>
-        <div class="control-row" style="margin-bottom:16px">
+        <div class="control-row" style="margin-bottom:var(--sp-4)">
           <div class="field"><label>Payment ID</label><input type="text" id="auditPaymentFilter" placeholder="pay_..." style="min-width:220px"></div>
         </div>
         <div class="log-scroll" id="auditLog"></div>
       </section>
 
       <footer class="app-footer">
-        <span>Veyra — built for Razorpay Buildathon 2026, Track 04</span>
+        <span>LedgerProof — evidence-driven financial reconciliation</span>
         <span id="apiTarget" class="mono"></span>
       </footer>
     </div>
@@ -176,7 +294,7 @@
 <div class="drawer" id="drawer">
   <div class="drawer-head">
     <div>
-      <div id="drawerTitle" style="font-family:var(--font-mono);font-size:14px"></div>
+      <div id="drawerTitle" style="font-family:var(--font-mono);font-size:14px;font-weight:600"></div>
       <div id="drawerSubtitle" class="muted" style="font-size:12.5px;margin-top:3px"></div>
     </div>
     <span class="drawer-close" id="drawerClose">&times;</span>
@@ -188,7 +306,7 @@
   <div class="modal">
     <div class="modal-head">
       <div>
-        <div style="font-family:var(--font-display);font-size:18px;font-weight:500">AI provider settings</div>
+        <div style="font-size:18px;font-weight:700">AI provider settings</div>
         <div class="muted" style="font-size:12.5px;margin-top:2px">Bring your own key. Switch provider or model any time -- takes effect immediately, no restart.</div>
       </div>
       <span class="drawer-close" id="settingsClose">&times;</span>
@@ -220,6 +338,36 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="reconcileOverlay">
+  <div class="modal" id="reconcileModal">
+    <div class="modal-head">
+      <div>
+        <div style="font-size:18px;font-weight:700">New reconciliation</div>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">Generate a synthetic dataset, or run reconciliation against the current one.</div>
+      </div>
+      <span class="drawer-close" id="reconcileClose">&times;</span>
+    </div>
+    <div class="modal-body" id="reconcileConfig">
+      <div class="field" style="margin-bottom:14px"><label>Seed</label><input type="number" id="seedInput" value="42" style="width:100%"></div>
+      <div class="field" style="margin-bottom:14px"><label>Payment records</label><input type="number" id="sizeInput" value="750" step="50" style="width:100%"></div>
+      <div class="reconcile-ai-mode" id="reconcileAiMode"></div>
+      <div style="display:flex;gap:8px;margin-top:18px">
+        <button class="btn" id="btnGenerate">Generate new dataset</button>
+        <button class="btn btn-primary" id="btnRun" style="flex:1">Run reconciliation</button>
+      </div>
+      <div class="muted mono" id="controlStatus" style="font-size:12px;margin-top:10px"></div>
+    </div>
+    <div class="reconcile-stages" id="reconcileStages" style="display:none">
+      <div class="reconcile-stage" data-stage="prepare">Preparing data</div>
+      <div class="reconcile-stage" data-stage="normalize">Normalizing records</div>
+      <div class="reconcile-stage" data-stage="candidates">Generating candidates</div>
+      <div class="reconcile-stage" data-stage="evidence">Evaluating evidence</div>
+      <div class="reconcile-stage" data-stage="verify">Verifying decisions</div>
+    </div>
+    <div class="reconcile-result" id="reconcileResult" style="display:none"></div>
   </div>
 </div>
 

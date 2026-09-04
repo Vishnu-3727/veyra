@@ -19,7 +19,7 @@ from app import db
 from app import settings as llm_settings
 from app.ai_reasoning import AIResult, reason_about_candidates
 from app.candidates import generate_candidates
-from app.exceptions import build_exception_detail
+from app.exceptions import SUGGESTED_ACTIONS, build_exception_detail
 from app.ingestion import ingest_all
 from app.policy import apply_ai_policy
 from app.scoring import NEEDS_AI, decide_deterministic
@@ -214,7 +214,6 @@ def _persist(conn, run_id, payment, status, category, matched_ref, confidence, m
     )
 
     if status == C.STATUS_EXCEPTION:
-        from app.exceptions import SUGGESTED_ACTIONS
         conn.execute(
             """INSERT INTO exceptions (run_id, payment_id, decision_id, category, suggested_action, created_at)
                VALUES (?,?,?,?,?,?)""",

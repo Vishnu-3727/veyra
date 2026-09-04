@@ -1,8 +1,5 @@
 fastapi
 uvicorn[standard]
-pandas
 rapidfuzz
-pydantic
-pydantic-settings
 python-dotenv
 openai

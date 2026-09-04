@@ -76,7 +76,7 @@ def generate_candidates(
         amount_diff_pct = amount_diff_abs / p_amount if p_amount else 1.0
 
         ref_match = ref_match_type(
-            payment.get("order_id", ""), payment.get("payment_id", ""),
+            payment.get("order_id", ""),
             b.get("utr", ""), b.get("narration", ""), b.get("reference_hint", ""),
         )
         name_sim = name_similarity(payment.get("customer_name", ""), b.get("payer_name") or b.get("narration", ""))
@@ -102,7 +102,7 @@ def generate_candidates(
     return out
 
 
-def find_duplicate_group(candidates: list[Candidate], thresholds: Thresholds) -> list[Candidate]:
+def find_duplicate_group(candidates: list[Candidate]) -> list[Candidate]:
     """Detect candidates that are themselves duplicates of each other -- i.e.
     a bank double-post of the exact same underlying transaction, identified
     by a shared UTR. Coincidental similarity (same customer, same round

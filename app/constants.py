@@ -30,10 +30,6 @@ CATEGORY_LABELS = {
     CAT_AI_UNAVAILABLE: "AI reasoning unavailable",
 }
 
-METHOD_RULE = "rule"
-METHOD_AI = "ai"
-METHOD_VALIDATION = "validation"
-
 INVOICE_FOUND_CONSISTENT = "found_consistent"
 INVOICE_FOUND_MISMATCH = "found_mismatch"
 INVOICE_NOT_FOUND = "not_found"

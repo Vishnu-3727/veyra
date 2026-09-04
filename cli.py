@@ -14,16 +14,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent / "data"))
 
 import config
 
 
 def cmd_generate(args) -> None:
-    from generate_dataset import generate
+    from app.generate_dataset import generate
 
     summary = generate(args.seed, args.size, config.RAW_DIR)
     print(json.dumps(summary, indent=2))
@@ -40,14 +36,10 @@ def cmd_evaluate(args) -> None:
     from app import db
     from app.evaluation import evaluate
 
-    run_id = args.run_id
+    run_id = args.run_id or db.latest_run_id()
     if not run_id:
-        with db.get_conn() as conn:
-            row = conn.execute("SELECT run_id FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
-        if not row:
-            print("No runs found. Run `python cli.py run` first.", file=sys.stderr)
-            sys.exit(1)
-        run_id = row["run_id"]
+        print("No runs found. Run `python cli.py run` first.", file=sys.stderr)
+        sys.exit(1)
     print(json.dumps(evaluate(run_id, config.RAW_DIR), indent=2))
 
 

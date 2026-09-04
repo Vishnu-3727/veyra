@@ -61,7 +61,7 @@ The frontend is a deliberate choice, not an afterthought: no Streamlit, no defau
 ## Architecture
 
 ```
-data/generate_dataset.py        synthetic 3-source dataset + ground truth (seeded, reproducible)
+app/generate_dataset.py         synthetic 3-source dataset + ground truth (seeded, reproducible)
         |
         v
 app/ingestion.py                CSV -> SQLite, validates required fields, never silently coerces bad data
@@ -130,7 +130,7 @@ Curated presets (all OpenAI-compatible chat-completions endpoints, so `ai_reason
 
 ## The synthetic dataset
 
-`data/generate_dataset.py` produces three sources (`payments.csv`, `bank_settlements.csv`, `invoices.csv`) plus `ground_truth.csv`, all derived from a single seeded `random.Random` instance and a fixed anchor date — fully reproducible (`--seed 42 --size 750` regenerates byte-identical output).
+`app/generate_dataset.py` produces three sources (`payments.csv`, `bank_settlements.csv`, `invoices.csv`) plus `ground_truth.csv`, all derived from a single seeded `random.Random` instance and a fixed anchor date — fully reproducible (`--seed 42 --size 750` regenerates byte-identical output).
 
 14 case types are deliberately generated, each with a documented judgment on whether a correct answer is even determinable from the evidence (`is_safely_resolvable`):
 
@@ -272,7 +272,7 @@ curl -X POST 'localhost:8000/settings?provider=openrouter&api_key=sk-or-...'
 config.py                  every threshold and env var, centralized
 cli.py                     CLI: generate / run / evaluate / baseline
 run.sh                     one-command launch (API + dashboard)
-data/generate_dataset.py   seeded synthetic dataset + ground truth generator
+app/generate_dataset.py    seeded synthetic dataset + ground truth generator
 app/
   ingestion.py             CSV -> SQLite, validation
   normalization.py         name/ref normalization, amount/date parsing, fuzzy similarity

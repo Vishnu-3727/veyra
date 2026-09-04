@@ -120,7 +120,7 @@ def _call_llm(s, payment: dict, candidates: list[Candidate], start: float) -> AI
     extra_headers = {}
     if s.provider == "openrouter":
         # Optional but polite: identifies the app in OpenRouter's dashboard/rankings.
-        extra_headers = {"HTTP-Referer": "https://github.com/Vishnu-3727/Veyra---FIntech", "X-Title": "Veyra"}
+        extra_headers = {"HTTP-Referer": "https://github.com/Vishnu-3727/Veyra---FIntech", "X-Title": "LedgerProof"}
 
     client = OpenAI(api_key=s.api_key, base_url=s.base_url, timeout=s.timeout_seconds, max_retries=0)
     kwargs = dict(
