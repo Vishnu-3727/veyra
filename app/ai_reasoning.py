@@ -22,6 +22,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import Optional
 
+import config
 from app import settings as llm_settings
 from app.candidates import Candidate
 
@@ -264,7 +265,12 @@ def _extract_json(raw: str) -> dict:
 #   * interpreter shutdown: concurrent.futures joins its worker threads at exit, so a still-hung
 #     call can delay process exit by up to the client timeout (config LLM_TIMEOUT_SECONDS,
 #     default 20s). Bounded, and only reachable after an AI call has already failed.
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="veyra-ai")
+#   * sizing: every reason_about_candidates() call occupies one slot for the duration of its
+#     HTTP request, so this pool must be at least as large as the number of concurrent callers
+#     (config.AI_CONCURRENCY) or the watchdog layer silently becomes the throughput ceiling.
+#     Sized with headroom so an abandoned-but-still-running worker cannot starve a live call.
+_executor = ThreadPoolExecutor(max_workers=2 * config.AI_CONCURRENCY + 4,
+                               thread_name_prefix="veyra-ai")
 
 
 def _ipv4_http_client(timeout: float):

@@ -80,6 +80,14 @@ LLM_MODEL = os.getenv("LLM_MODEL", "nvidia/nemotron-nano-9b-v2:free")
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
 AI_ENABLED = bool(LLM_API_KEY)
 
+# How many AI-eligible cases are reasoned about at once. The AI escalation set is the only
+# network-bound part of a run; at ~7s per call a 48-case batch costs ~5 minutes serially and
+# ~40s at 8 concurrent. Kept as a knob because the ceiling is the PROVIDER's rate limit, not
+# ours: free tiers commonly allow ~20 requests/minute, and exceeding that trades latency for
+# 429s (which the circuit breaker then reads as an outage). Lower it if you see 429s; 1
+# restores the original fully-serial behaviour.
+AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "8")))
+
 # Transport-level workaround for a common laptop/wifi failure mode, kept as an explicit knob
 # rather than hidden magic. Some networks advertise an IPv6 default route but black-hole IPv6
 # egress. `getaddrinfo` returns the provider's AAAA record first, and the installed HTTP client

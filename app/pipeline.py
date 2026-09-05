@@ -21,6 +21,7 @@ import hashlib
 import json
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from app.ingestion import ingest_all
 from app.normalization import normalized_bank_ref_text, ref_fragment, ref_match_normalized
 from app.policy import apply_ai_policy
 from app.scoring import NEEDS_AI, decide_deterministic
+import config
 from config import THRESHOLDS
 
 # AI outcomes that mean "this provider is not currently usable": a transport/timeout failure
@@ -254,6 +256,53 @@ def run_reconciliation(raw_dir: Path | None = None) -> dict:
         raise
 
 
+def _prefetch_ai(pending, run_ai):
+    """Reason about every AI-eligible case up front, `config.AI_CONCURRENCY` at a time.
+
+    `pending` is [(payment_index, payment, ai_candidates)] in payment order. Returns
+    ({payment_index: AIResult}, circuit_open, circuit_reason).
+
+    Why this exists: AI escalation is the only network-bound step in a run, and issuing those
+    calls one at a time made a batch take (cases x per-call latency) -- minutes of wall clock
+    spent almost entirely waiting on sockets. The calls are independent (each looks at one
+    payment and its own candidates) so they parallelize without changing any decision.
+
+    The circuit breaker keeps its meaning -- "stop paying the per-call timeout once the provider
+    is clearly broken" -- but its unit is now a chunk rather than a single call. Results are
+    still examined in payment order, so which cases trip it is deterministic; the cost of
+    concurrency is that up to one chunk of calls may already be in flight when it trips. That
+    bound is what keeps the worst case honest: at most AI_CONCURRENCY wasted calls, not the
+    whole remaining batch.
+    """
+    results: dict[int, AIResult] = {}
+    consecutive = 0
+    circuit_open = False
+    circuit_reason = ""
+    width = max(1, config.AI_CONCURRENCY)
+
+    with ThreadPoolExecutor(max_workers=width, thread_name_prefix="veyra-ai-batch") as pool:
+        for start in range(0, len(pending), width):
+            chunk = pending[start:start + width]
+            if circuit_open:
+                break
+            # reason_about_candidates never raises -- every failure path returns an
+            # AIResult(decision="ERROR"), so a chunk cannot lose results to an exception.
+            for (idx, _payment, _cands), result in zip(chunk, pool.map(
+                    lambda item: reason_about_candidates(item[1], item[2], settings=run_ai), chunk)):
+                results[idx] = result
+            # Ordered replay: identical accounting to the original serial loop.
+            for idx, _payment, _cands in chunk:
+                if results[idx].decision in _AI_FAILURE_DECISIONS:
+                    consecutive += 1
+                    if consecutive >= THRESHOLDS.ai_circuit_breaker_threshold:
+                        circuit_open = True
+                        circuit_reason = results[idx].error or "repeated failures"
+                else:
+                    consecutive = 0
+
+    return results, circuit_open, circuit_reason
+
+
 def _execute_run(run_id: str, started_at: str, t_start: float, raw_dir: Path,
                  run_ai: "llm_settings.LLMSettings") -> dict:
     ingestion_reports = ingest_all(raw_dir)
@@ -280,15 +329,32 @@ def _execute_run(run_id: str, started_at: str, t_start: float, raw_dir: Path,
     status_counts = {C.STATUS_AUTO_MATCH: 0, C.STATUS_AI_ASSISTED_MATCH: 0, C.STATUS_EXCEPTION: 0}
     category_counts: dict[str, int] = {}
     ai_invocations = 0
-    ai_consecutive_failures = 0
     ai_circuit_open = False
     ai_circuit_reason = ""
     total_proc_ms = 0.0
 
+    # Deterministic scoring first, for the whole batch. It is pure CPU work over data already in
+    # memory, so doing it up front costs nothing and is what makes the AI-eligible set knowable
+    # before any network call is made -- which is what lets those calls run concurrently below.
+    scored: dict[int, tuple] = {}
+    pending_ai: list[tuple] = []
+    for idx, payment in enumerate(batch.payments):
+        if payment.get("validation_status") == "invalid":
+            continue  # never reaches candidate generation; handled in the loop below
+        candidates = generate_candidates(payment, batch.index, THRESHOLDS)
+        outcome = decide_deterministic(candidates, THRESHOLDS)
+        scored[idx] = (candidates, outcome)
+        if outcome.status == NEEDS_AI and run_ai.enabled:
+            pending_ai.append((idx, payment, outcome.ai_candidates))
+
+    ai_results: dict[int, AIResult] = {}
+    if pending_ai:
+        ai_results, ai_circuit_open, ai_circuit_reason = _prefetch_ai(pending_ai, run_ai)
+
     # One connection, but committed per decision: the write lock is never held across an LLM call.
     conn = db.connect()
     try:
-        for payment in batch.payments:
+        for idx, payment in enumerate(batch.payments):
             t0 = time.perf_counter()
 
             if payment.get("validation_status") == "invalid":
@@ -304,8 +370,7 @@ def _execute_run(run_id: str, started_at: str, t_start: float, raw_dir: Path,
                 total_proc_ms += (time.perf_counter() - t0) * 1000
                 continue
 
-            candidates = generate_candidates(payment, batch.index, THRESHOLDS)
-            outcome = decide_deterministic(candidates, THRESHOLDS)
+            candidates, outcome = scored[idx]
 
             ai_used = False
             ai_evidence = None
@@ -328,14 +393,15 @@ def _execute_run(run_id: str, started_at: str, t_start: float, raw_dir: Path,
                               f"AI calls rather than hanging the batch on a broken provider.",
                     )
                 else:
-                    ai_result = reason_about_candidates(payment, outcome.ai_candidates, settings=run_ai)
-                    if ai_result.decision in _AI_FAILURE_DECISIONS:
-                        ai_consecutive_failures += 1
-                        if ai_consecutive_failures >= THRESHOLDS.ai_circuit_breaker_threshold:
-                            ai_circuit_open = True
-                            ai_circuit_reason = ai_result.error or "repeated failures"
-                    else:
-                        ai_consecutive_failures = 0
+                    # Already obtained by _prefetch_ai (which also owns the circuit breaker).
+                    # A case reached after the breaker tripped has no entry -- the same
+                    # AI_UNAVAILABLE outcome the serial version produced, without the call.
+                    ai_result = ai_results.get(idx) or AIResult(
+                        decision="ERROR",
+                        error=f"AI circuit breaker open after {THRESHOLDS.ai_circuit_breaker_threshold} "
+                              f"consecutive failures this batch ({ai_circuit_reason}); skipping remaining "
+                              f"AI calls rather than hanging the batch on a broken provider.",
+                        model=run_ai.model)
                 ai_evidence = ai_result.to_evidence()
                 policy_outcome = apply_ai_policy(ai_result, outcome.ai_candidates, THRESHOLDS)
                 method = "ai"
