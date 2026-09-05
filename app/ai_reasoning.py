@@ -297,7 +297,7 @@ def _call_llm(s, payment: dict, candidates: list[Candidate], start: float) -> AI
     extra_headers = {}
     if s.provider == "openrouter":
         # Optional but polite: identifies the app in OpenRouter's dashboard/rankings.
-        extra_headers = {"HTTP-Referer": "https://github.com/Vishnu-3727/Veyra---FIntech", "X-Title": "Veyra"}
+        extra_headers = {"HTTP-Referer": "https://github.com/Vishnu-3727/veyra", "X-Title": "Veyra"}
 
     kwargs = dict(
         model=s.model,

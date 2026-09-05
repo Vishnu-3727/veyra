@@ -50,8 +50,8 @@ A naive fuzzy-matcher is confidently **wrong more than a third of the time it au
 ## Quick start
 
 ```bash
-git clone https://github.com/Vishnu-3727/Veyra---FIntech.git
-cd Veyra---FIntech
+git clone https://github.com/Vishnu-3727/veyra.git
+cd veyra
 ./run.sh                      # → http://127.0.0.1:8501
 ```
 
