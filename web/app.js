@@ -1,11 +1,11 @@
-// LedgerProof frontend — vanilla JS, no build step. Talks to the FastAPI
+// Veyra frontend — vanilla JS, no build step. Talks to the FastAPI
 // backend over fetch(). Every render function is pure: takes data,
 // returns/mutates DOM, never hides a failure silently (network/API errors
 // surface as a toast or a persistent banner, not a blank screen).
 'use strict';
 
 const API_BASE = (() => {
-  const stored = localStorage.getItem('ledgerproof_api_base');
+  const stored = localStorage.getItem('veyra_api_base');
   if (stored) return stored;
   return `${location.protocol}//${location.hostname}:8000`;
 })();
@@ -44,9 +44,17 @@ function icon(name, cls = '') {
   return `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 }
 
+// Page sizes. /decisions pages with offset (server cap: limit<=1000); /exceptions
+// and /audit have no offset, so "load more" raises their limit up to API_MAX_LIMIT.
+const PAGE_STEP = 300;
+const DECISIONS_PAGE = 300;
+const API_MAX_LIMIT = 2000;
+
 const state = {
   meta: null, health: null, runs: [], runId: null, runDetail: null,
   evaluation: null, baseline: null, charts: {}, excCategory: '',
+  decisionsOffset: 0, decisionsShown: 0, excLimit: PAGE_STEP, auditLimit: PAGE_STEP,
+  lastRunError: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -69,13 +77,40 @@ function toast(message, kind = '') {
   setTimeout(() => el.remove(), kind === 'error' ? 6000 : 3200);
 }
 
-async function request(method, path, params = {}) {
+// Optional API auth: when the server has API_AUTH_TOKEN set, every endpoint except
+// /health answers 401. The operator supplies the token at runtime and it is held in
+// sessionStorage -- this tab, this session only. Never localStorage, never a URL
+// parameter (URLs are logged by browsers and proxies), never a committed file.
+const API_TOKEN_KEY = 'veyra_api_token';
+function getApiToken() {
+  try { return sessionStorage.getItem(API_TOKEN_KEY) || ''; } catch { return ''; }
+}
+
+// Set as soon as any endpoint answers 401, so the shell can say "auth required"
+// rather than "backend unreachable" when the bootstrap chain fails.
+let authRequired = false;
+
+async function request(method, path, params = {}, jsonBody = null) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''));
   const url = `${API_BASE}${path}${qs.toString() ? '?' + qs.toString() : ''}`;
   setLoading(true);
   try {
-    const res = await fetch(url, { method });
+    const opts = { method, headers: {} };
+    const token = getApiToken();
+    if (token) opts.headers['X-API-Token'] = token;
+    if (jsonBody !== null) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(jsonBody);
+    }
+    const res = await fetch(url, opts);
     const body = await res.json().catch(() => ({}));
+    // 401 is never a data problem: without the token the whole dashboard would render
+    // empty, so surface a persistent prompt instead of a stack of identical toasts.
+    if (res.status === 401) {
+      authRequired = true;
+      showAuthPrompt();
+      throw new Error(body.detail || 'Unauthorized -- dashboard API token required.');
+    }
     if (!res.ok) throw new Error(body.detail || `${res.status} ${res.statusText}`);
     return body;
   } catch (e) {
@@ -87,6 +122,9 @@ async function request(method, path, params = {}) {
 }
 const apiGet = (path, params) => request('GET', path, params);
 const apiPost = (path, params) => request('POST', path, params);
+// Sensitive payloads (e.g. the LLM API key) go in a JSON body, never in the URL -- URLs are
+// routinely logged by browsers, proxies, and monitoring tools.
+const apiPostJson = (path, jsonBody) => request('POST', path, {}, jsonBody);
 
 // ---------------------------------------------------------------------------
 // formatting
@@ -207,22 +245,93 @@ function renderKV(value, depth = 0) {
 
 // ---------------------------------------------------------------------------
 // charts (Chart.js, themed to match the design system)
+//
+// Charts here are decorative: every figure they plot is also rendered as text
+// (KPI cards, tables, proportion bars). Chart.js is vendored locally, but if the
+// file is missing, blocked, or fails to evaluate, `Chart` is simply undefined --
+// touching it at module scope would abort the whole script and blank the app, and
+// throwing inside a render function would truncate that view. Both paths are
+// therefore guarded and degrade to an inline notice.
 // ---------------------------------------------------------------------------
 
-Chart.defaults.color = '#A8A49B';
-Chart.defaults.font.family = "'Inter', sans-serif";
-Chart.defaults.borderColor = '#26251F';
-// Every chart lives in a `.chart-box` with an explicit CSS height. Without
-// this, Chart.js sizes the canvas from its own aspect ratio based on
-// container width and ignores that height, overflowing past the panel.
-Chart.defaults.maintainAspectRatio = false;
-Chart.defaults.responsive = true;
+if (typeof Chart !== 'undefined') {
+  Chart.defaults.color = '#A8A49B';
+  Chart.defaults.font.family = "'Inter', sans-serif";
+  Chart.defaults.borderColor = '#26251F';
+  // Every chart lives in a `.chart-box` with an explicit CSS height. Without
+  // this, Chart.js sizes the canvas from its own aspect ratio based on
+  // container width and ignores that height, overflowing past the panel.
+  Chart.defaults.maintainAspectRatio = false;
+  Chart.defaults.responsive = true;
+}
+
+let chartLibWarned = false;
+function chartUnavailable(canvas, err) {
+  if (!chartLibWarned) {
+    chartLibWarned = true;
+    console.warn('Veyra: Chart.js unavailable — charts replaced with a notice, all figures remain rendered as text.', err || '');
+  }
+  canvas.style.display = 'none';
+  const box = canvas.parentElement;
+  if (box && !box.querySelector('.chart-fallback')) {
+    const note = document.createElement('div');
+    note.className = 'chart-fallback';
+    note.textContent = 'Chart library unavailable — figures above are unaffected.';
+    box.appendChild(note);
+  }
+}
 
 function upsertChart(key, canvasId, config) {
-  if (state.charts[key]) state.charts[key].destroy();
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
-  state.charts[key] = new Chart(ctx, config);
+  if (state.charts[key]) {
+    try { state.charts[key].destroy(); } catch (e) { /* a half-constructed chart is not worth a stack trace */ }
+    delete state.charts[key];
+  }
+  if (typeof Chart === 'undefined') { chartUnavailable(ctx); return; }
+  try {
+    state.charts[key] = new Chart(ctx, config);
+  } catch (e) {
+    chartUnavailable(ctx, e);
+    return;
+  }
+  // A previous failure may have left the canvas hidden behind a notice.
+  ctx.style.display = '';
+  const stale = ctx.parentElement && ctx.parentElement.querySelector('.chart-fallback');
+  if (stale) stale.remove();
+}
+
+// ---------------------------------------------------------------------------
+// run status helpers
+//
+// A run row is RUNNING | COMPLETED | FAILED, and only a COMPLETED run is
+// guaranteed to carry full metrics (total_payments, status_counts, timings). A
+// RUNNING or FAILED run may carry a partial dict or none at all, so every read
+// goes through these helpers and every KPI surface checks hasRunMetrics() first
+// -- a partial run must explain itself, not throw on `undefined.status_counts`.
+// ---------------------------------------------------------------------------
+
+function runMetrics() {
+  const m = state.runDetail && state.runDetail.metrics;
+  return (m && typeof m === 'object') ? m : {};
+}
+function statusCounts() {
+  const sc = runMetrics().status_counts;
+  return (sc && typeof sc === 'object') ? sc : {};
+}
+function runStatus() {
+  return (state.runDetail && state.runDetail.status) || 'COMPLETED';
+}
+function hasRunMetrics() {
+  const m = runMetrics();
+  return !!state.runDetail && m.total_payments !== null && m.total_payments !== undefined && !!m.status_counts;
+}
+function fmtSeconds(x, d = 2) {
+  return (typeof x === 'number' && isFinite(x)) ? `${x.toFixed(d)}s` : '—';
+}
+// Status suffix for run labels; a COMPLETED run needs no annotation.
+function runStatusSuffix(status) {
+  return (status && status !== 'COMPLETED') ? ` — ${status}` : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -239,20 +348,22 @@ function enterApp() {
   document.getElementById('app').classList.remove('hidden');
   window.scrollTo({ top: 0 });
 }
-document.getElementById('btnEnter').addEventListener('click', enterApp);
-document.getElementById('btnEnterFinal').addEventListener('click', enterApp);
+for (const id of ['btnEnter', 'btnEnterHero', 'btnEnterFinal']) {
+  document.getElementById(id).addEventListener('click', enterApp);
+}
 function updateLandingStats() {
-  const total = state.runDetail ? state.runDetail.metrics.total_payments : null;
+  const complete = hasRunMetrics();
+  const m = runMetrics();
+  const total = complete ? m.total_payments : null;
   document.getElementById('landingStatusLine').innerHTML = total
-    ? `<span class="stat-chip">${icon('database')}<b>${fmtNum(total)}</b> records</span><span class="stat-chip">${icon('activity')}latest run <b>${state.runId}</b></span><span class="stat-chip">${icon('clock')}<b>${state.runDetail.metrics.total_processing_seconds.toFixed(2)}s</b> to process</span>`
+    ? `<span class="stat-chip">${icon('database')}<b>${fmtNum(total)}</b> records</span><span class="stat-chip">${icon('activity')}latest run <b>${escapeHtml(state.runId)}</b></span><span class="stat-chip">${icon('clock')}<b>${fmtSeconds(m.total_processing_seconds)}</b> to process</span>`
     : '';
 
   // hero mockup preview -- a live miniature of the real Overview, not a
   // decorative fake chart. Reuses the same run metrics rendered elsewhere.
   const kpis = document.querySelectorAll('#heroPreviewBody .hpv-kpi .v');
-  if (state.runDetail && kpis.length === 2) {
-    const m = state.runDetail.metrics;
-    const sc = m.status_counts;
+  if (complete && total > 0 && kpis.length === 2) {
+    const sc = statusCounts();
     const reconciled = (sc.AUTO_MATCH || 0) + (sc.AI_ASSISTED_MATCH || 0);
     kpis[0].textContent = fmtNum(total);
     kpis[1].textContent = fmtNum(reconciled);
@@ -267,7 +378,7 @@ function updateLandingStats() {
   if (state.recentPreview && state.recentPreview.length && rows.length) {
     state.recentPreview.slice(0, rows.length).forEach((d, i) => {
       const ok = d.status !== 'EXCEPTION';
-      rows[i].innerHTML = `<span class="d" style="background:${ok ? 'var(--success)' : 'var(--error)'}"></span>${d.payment_id} ${ok ? 'auto-matched' : 'exception'}`;
+      rows[i].innerHTML = `<span class="d" style="background:${ok ? 'var(--success)' : 'var(--error)'}"></span>${escapeHtml(d.payment_id)} ${ok ? 'auto-matched' : 'exception'}`;
     });
   }
 }
@@ -276,7 +387,7 @@ function updateLandingStats() {
 // sidebar: collapse (desktop) + off-canvas (mobile)
 // ---------------------------------------------------------------------------
 
-const SIDEBAR_KEY = 'ledgerproof_sidebar_collapsed';
+const SIDEBAR_KEY = 'veyra_sidebar_collapsed';
 function setSidebarCollapsed(collapsed) {
   document.body.classList.toggle('sidebar-collapsed', collapsed);
   localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
@@ -343,26 +454,72 @@ function renderAIStatus(health) {
   }
 }
 
-function renderSystemStatus(ok) {
+// authBlocked = the API answered and refused us (401). That is NOT the same as an
+// unreachable backend, and saying "Backend unreachable" there sends the operator to
+// restart a server that is running fine.
+function renderSystemStatus(ok, authBlocked = false) {
   const block = document.getElementById('systemStatusBlock');
   const banner = document.getElementById('apiOfflineBanner');
   block.classList.toggle('offline', !ok);
-  document.getElementById('systemStatusText').textContent = ok ? 'SYSTEM OPERATIONAL' : 'API UNREACHABLE';
-  banner.classList.toggle('show', !ok);
-  document.getElementById('statusRule').textContent = ok ? 'ACTIVE' : 'OFFLINE';
+  document.getElementById('systemStatusText').textContent =
+    ok ? 'SYSTEM OPERATIONAL' : authBlocked ? 'API AUTH REQUIRED' : 'API UNREACHABLE';
+  // The auth banner already explains a 401, so do not stack the offline banner on top.
+  banner.classList.toggle('show', !ok && !authBlocked);
+  const down = authBlocked ? 'LOCKED' : 'OFFLINE';
+  document.getElementById('statusRule').textContent = ok ? 'ACTIVE' : down;
   document.getElementById('statusRule').className = 'system-row-status ' + (ok ? 'on' : 'off');
-  document.getElementById('statusPipeline').textContent = ok ? 'READY' : 'OFFLINE';
+  document.getElementById('statusPipeline').textContent = ok ? 'READY' : down;
   document.getElementById('statusPipeline').className = 'system-row-status ' + (ok ? 'on' : 'off');
 }
 
 function updateLastRunLabel() {
   const el = document.getElementById('systemLastRun');
   if (state.runDetail) {
-    el.textContent = `Last run: ${fmtTime(state.runDetail.finished_at || state.runDetail.started_at)}`;
+    const status = runStatus();
+    el.textContent = `Last run: ${fmtTime(state.runDetail.finished_at || state.runDetail.started_at)}${runStatusSuffix(status)}`;
   } else {
     el.textContent = 'No runs yet';
   }
 }
+
+// ---------------------------------------------------------------------------
+// optional API auth prompt
+//
+// With API_AUTH_TOKEN set server-side, /health still answers but every data
+// endpoint returns 401 -- which would look like an empty dashboard. The banner
+// says what is actually wrong and takes the token for this browser session.
+// ---------------------------------------------------------------------------
+
+let authPromptDismissed = false;
+function showAuthPrompt() {
+  if (authPromptDismissed) return;
+  document.getElementById('apiAuthBanner').classList.add('show');
+}
+function hideAuthPrompt() {
+  document.getElementById('apiAuthBanner').classList.remove('show');
+}
+document.getElementById('btnSaveApiToken').addEventListener('click', () => {
+  const input = document.getElementById('apiTokenInput');
+  const token = input.value.trim();
+  if (!token) { toast('Enter the dashboard API token first.', 'error'); return; }
+  try {
+    sessionStorage.setItem(API_TOKEN_KEY, token);
+  } catch (e) {
+    toast('This browser blocks sessionStorage — the token cannot be stored.', 'error');
+    return;
+  }
+  input.value = '';
+  authPromptDismissed = false;
+  hideAuthPrompt();
+  bootstrap();
+});
+document.getElementById('apiTokenInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btnSaveApiToken').click();
+});
+document.getElementById('btnDismissApiToken').addEventListener('click', () => {
+  authPromptDismissed = true;
+  hideAuthPrompt();
+});
 
 document.getElementById('btnRetryApi').addEventListener('click', () => bootstrap());
 
@@ -380,10 +537,10 @@ async function loadMetaAndHealth() {
 
   const statusSel = document.getElementById('filterStatus');
   statusSel.querySelectorAll('option:not(:first-child)').forEach((o) => o.remove());
-  Object.entries(meta.statuses).forEach(([k, v]) => statusSel.insertAdjacentHTML('beforeend', `<option value="${k}">${v}</option>`));
+  Object.entries(meta.statuses).forEach(([k, v]) => statusSel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`));
   const catSel = document.getElementById('filterCategory');
   catSel.querySelectorAll('option:not(:first-child)').forEach((o) => o.remove());
-  Object.entries(meta.category_labels).forEach(([k, v]) => catSel.insertAdjacentHTML('beforeend', `<option value="${k}">${v}</option>`));
+  Object.entries(meta.category_labels).forEach(([k, v]) => catSel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`));
 }
 
 async function loadRuns(selectRunId) {
@@ -400,7 +557,12 @@ async function loadRuns(selectRunId) {
     return;
   }
   state.runs.forEach((r) => {
-    sel.insertAdjacentHTML('beforeend', `<option value="${r.run_id}">${r.run_id} (${r.total_payments} records)</option>`);
+    // A RUNNING or FAILED run must never look like a finished one in the picker,
+    // and its record count may not exist yet.
+    const records = (r.total_payments === null || r.total_payments === undefined)
+      ? 'no records yet' : `${r.total_payments} records`;
+    const label = `${r.run_id} (${records})${runStatusSuffix(r.status)}`;
+    sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(r.run_id)}">${escapeHtml(label)}</option>`);
   });
   sel.value = selectRunId && state.runs.some((r) => r.run_id === selectRunId) ? selectRunId : state.runs[0].run_id;
   state.runId = sel.value;
@@ -411,16 +573,19 @@ document.getElementById('runSelect').addEventListener('change', (e) => {
   loadRunData();
 });
 
-function setOverviewEmpty(isEmpty) {
-  document.getElementById('overviewEmpty').style.display = isEmpty ? 'block' : 'none';
-  document.getElementById('overviewData').style.display = isEmpty ? 'none' : 'block';
+// Overview has three mutually exclusive bodies: the KPI dashboard, the
+// "no runs yet" call to action, and the partial-run explanation.
+function setOverviewMode(mode) {
+  document.getElementById('overviewData').style.display = mode === 'data' ? 'block' : 'none';
+  document.getElementById('overviewEmpty').style.display = mode === 'no-runs' ? 'block' : 'none';
+  document.getElementById('overviewIncomplete').style.display = mode === 'incomplete' ? 'block' : 'none';
 }
 
 async function loadRunData() {
   if (!state.runId) {
     document.getElementById('overviewCaption').textContent = 'Evidence-driven reconciliation for merchant finance operations.';
     document.getElementById('overviewStatusLine').innerHTML = '';
-    setOverviewEmpty(true);
+    setOverviewMode('no-runs');
     updateLastRunLabel();
     updateLandingStats();
     return;
@@ -429,12 +594,13 @@ async function loadRunData() {
     const [detail, evaluation, baseline] = await Promise.all([
       apiGet(`/runs/${state.runId}`),
       apiGet(`/runs/${state.runId}/evaluation`).catch(() => null),
-      apiGet('/baseline').catch(() => null),
+      // Run-scoped: the baseline must be computed on the SAME dataset snapshot as
+      // the selected run, otherwise the comparison silently mixes two datasets.
+      apiGet('/baseline', { run_id: state.runId }).catch(() => null),
     ]);
     state.runDetail = detail;
     state.evaluation = evaluation;
     state.baseline = baseline;
-    setOverviewEmpty(false);
     renderOverview();
     renderEvaluation();
     updateLandingStats();
@@ -443,7 +609,7 @@ async function loadRunData() {
     updateLandingStats();
     loadStoryExamples();
   } catch (e) {
-    toast(e.message, 'error', e && e.stack);
+    toast(e.message, 'error');
   }
 }
 
@@ -463,9 +629,35 @@ function slimStat(label, value, iconName = 'activity') {
   return `<div class="metric-secondary"><span class="metric-secondary-value">${value}</span><span class="metric-secondary-label">${icon(iconName, 'slim-icon')}${label}</span></div>`;
 }
 
+// A RUNNING or FAILED run carries no usable metrics: say what happened (and why,
+// when the backend recorded an error) instead of rendering zeros as if they were
+// measurements.
+function renderIncompleteRun() {
+  const status = runStatus();
+  const err = state.runDetail && state.runDetail.error;
+  const title = status === 'RUNNING' ? 'Reconciliation in progress' : `Run ${status}`;
+  const body = status === 'RUNNING'
+    ? 'This run has not finished, so its metrics are still partial. Re-select the run once it completes.'
+    : 'This run did not complete, so it has no trustworthy metrics. Nothing here is a measurement of a finished batch.';
+  document.getElementById('overviewCaption').textContent = 'Evidence-driven reconciliation for merchant finance operations.';
+  document.getElementById('overviewStatusLine').innerHTML =
+    `<span class="stat-chip">${icon('activity')}run <b class="mono">${escapeHtml(state.runId)}</b></span><span class="stat-chip">${icon('alertTriangle')}status <b>${escapeHtml(status)}</b></span>`;
+  document.getElementById('circuitBreakerWarning').style.display = 'none';
+  document.getElementById('overviewIncomplete').innerHTML = `
+    <div class="es-title">${escapeHtml(title)}</div>
+    <div class="es-body">${escapeHtml(body)}</div>
+    ${err ? `<div class="verdict-box blocked" style="text-align:left;max-width:640px;margin:var(--sp-4) auto 0">
+      <div class="verdict-title">Reported error</div>
+      <div class="verdict-text">${escapeHtml(String(err))}</div>
+    </div>` : ''}`;
+  setOverviewMode('incomplete');
+}
+
 function renderOverview() {
-  const m = state.runDetail.metrics;
-  const sc = m.status_counts;
+  if (!hasRunMetrics()) { renderIncompleteRun(); return; }
+  setOverviewMode('data');
+  const m = runMetrics();
+  const sc = statusCounts();
   const total = m.total_payments;
   const auto = sc.AUTO_MATCH || 0, ai = sc.AI_ASSISTED_MATCH || 0, exc = sc.EXCEPTION || 0;
   const reconciled = auto + ai;
@@ -473,7 +665,7 @@ function renderOverview() {
 
   document.getElementById('overviewCaption').textContent = 'Evidence-driven reconciliation for merchant finance operations.';
   document.getElementById('overviewStatusLine').innerHTML =
-    `<span class="stat-chip">${icon('database')}<b>${fmtNum(total)}</b> records</span><span class="stat-chip">${icon('activity')}run <b class="mono">${state.runId}</b></span><span class="stat-chip">${icon('clock')}<b>${m.total_processing_seconds.toFixed(2)}s</b> to process</span>`;
+    `<span class="stat-chip">${icon('database')}<b>${fmtNum(total)}</b> records</span><span class="stat-chip">${icon('activity')}run <b class="mono">${escapeHtml(state.runId)}</b></span><span class="stat-chip">${icon('clock')}<b>${fmtSeconds(m.total_processing_seconds)}</b> to process</span>`;
 
   const cbWarning = document.getElementById('circuitBreakerWarning');
   if (m.ai_circuit_breaker_tripped) {
@@ -495,13 +687,15 @@ function renderOverview() {
 
   document.getElementById('slimStats').innerHTML = [
     slimStat('throughput', m.throughput_per_second ? `${m.throughput_per_second.toFixed(1)} rec/s` : '—', 'bolt'),
-    slimStat('processing time', `${m.total_processing_seconds.toFixed(2)}s`, 'clock'),
+    slimStat('processing time', fmtSeconds(m.total_processing_seconds), 'clock'),
     slimStat('avg / record', m.avg_processing_ms_per_record ? `${m.avg_processing_ms_per_record.toFixed(2)}ms` : '—', 'clock'),
     slimStat('AI invocations', fmtNum(m.ai_invocations), 'cpu'),
   ].join('');
 
   const proof = document.getElementById('proofStrip');
-  if (state.evaluation && state.baseline) {
+  // "Same dataset" is the entire claim of this strip, so it is shown only when the
+  // baseline really was scored on this run's snapshot (see baselineIsRunScoped).
+  if (state.evaluation && baselineIsRunScoped()) {
     proof.style.display = 'flex';
     document.getElementById('proofUs').textContent = fmtPct(state.evaluation.false_match_rate, 1);
     document.getElementById('proofBaseline').textContent = fmtPct(state.baseline.false_match_rate, 1);
@@ -515,10 +709,10 @@ function renderOverview() {
     { key: 'ai', label: 'AI-assisted', n: ai },
     { key: 'exception', label: 'Exceptions', n: exc },
   ].filter((s) => s.n > 0);
-  document.getElementById('propBar').innerHTML = segs.map((s) => {
+  document.getElementById('propBar').innerHTML = total ? segs.map((s) => {
     const pct = (s.n / total) * 100;
     return `<div class="prop-seg ${s.key}" style="width:${pct}%">${pct >= 7 ? fmtPct(s.n / total, 0) : ''}</div>`;
-  }).join('');
+  }).join('') : '';
   document.getElementById('propLegend').innerHTML = segs.map((s) =>
     `<span><span class="sw" style="background:${STATUS_COLORS[s.key === 'auto' ? 'AUTO_MATCH' : s.key === 'ai' ? 'AI_ASSISTED_MATCH' : 'EXCEPTION']}"></span>${s.label} (${fmtNum(s.n)})</span>`
   ).join('');
@@ -532,7 +726,7 @@ function renderOverview() {
   } else {
     reasonList.innerHTML = cc.map(([k, v]) => `
       <div class="reason-row">
-        <span class="rl-label">${catLabel(k)}</span>
+        <span class="rl-label">${escapeHtml(catLabel(k))}</span>
         <span class="rl-track"><span class="rl-fill" style="width:${(v / maxCount) * 100}%"></span></span>
         <span class="rl-count">${v}</span>
       </div>`).join('');
@@ -548,55 +742,101 @@ async function refreshRecent() {
   const tbody = document.querySelector('#recentTable tbody');
   document.querySelector('#recentTable thead').innerHTML = '<tr><th>Payment</th><th>Amount</th><th>Decision</th></tr>';
   tbody.innerHTML = data.results.map((d) => `
-    <tr data-payment="${d.payment_id}" tabindex="0">
-      <td class="mono">${d.payment_id}</td>
+    <tr data-payment="${escapeHtml(d.payment_id)}" tabindex="0">
+      <td class="mono">${escapeHtml(d.payment_id)}</td>
       <td class="mono">${fmtAmount(d.amount)}</td>
       <td>${statusBadge(d.status)}</td>
     </tr>`).join('');
   tbody.querySelectorAll('tr').forEach((row) => row.addEventListener('click', () => openDecisionDrawer(row.dataset.payment)));
+}
+
+// ---------------------------------------------------------------------------
+// pagination footers
+//
+// Every list endpoint is capped server-side, so a rendered list is routinely a
+// prefix of the truth. A truncated list must never imply completeness: show
+// "N of TOTAL shown" and either offer the next page or say the cap was reached.
+// ---------------------------------------------------------------------------
+
+function renderPager(containerId, shown, total, atCap, onMore) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const known = typeof total === 'number';
+  const parts = [`<span class="pager-count">${fmtNum(shown)} of ${known ? fmtNum(total) : '?'} shown</span>`];
+  if (known && shown < total) {
+    parts.push(atCap
+      ? `<span class="pager-note">API page cap of ${fmtNum(API_MAX_LIMIT)} reached — ${fmtNum(total - shown)} more exist; filter to inspect them.</span>`
+      : '<button class="btn" data-more="1">Load more</button>');
+  }
+  el.innerHTML = parts.join('');
+  const btn = el.querySelector('[data-more]');
+  if (btn) btn.addEventListener('click', () => { btn.disabled = true; onMore(); });
 }
 
 // ---------------------------------------------------------------------------
 // Reconciliation (decisions table)
 // ---------------------------------------------------------------------------
 
-async function refreshDecisions() {
+// append=false starts at offset 0 and replaces the table; append=true fetches the
+// next offset page and adds to it.
+async function refreshDecisions(append = false) {
   if (!state.runId) return;
   const status = document.getElementById('filterStatus').value;
   const category = document.getElementById('filterCategory').value;
-  const data = await apiGet('/decisions', { run_id: state.runId, status, category, limit: 300 });
-  document.getElementById('decisionsCount').textContent = `${data.results.length} of ${data.total} shown`;
-  const m = state.runDetail.metrics;
-  document.getElementById('reconCaption').innerHTML =
-    `${fmtNum(m.total_payments)} records &nbsp;·&nbsp; <span style="color:var(--success)">${fmtNum((m.status_counts.AUTO_MATCH||0)+(m.status_counts.AI_ASSISTED_MATCH||0))} automatically reconciled</span> &nbsp;·&nbsp; <span style="color:var(--error)">${fmtNum(m.status_counts.EXCEPTION||0)} sent for review</span>`;
+  if (!append) { state.decisionsOffset = 0; state.decisionsShown = 0; }
+  const data = await apiGet('/decisions', {
+    run_id: state.runId, status, category, limit: DECISIONS_PAGE, offset: state.decisionsOffset,
+  });
+  state.decisionsShown += data.results.length;
+  state.decisionsOffset = state.decisionsShown;
+  document.getElementById('decisionsCount').textContent = `${fmtNum(state.decisionsShown)} of ${fmtNum(data.total)} shown`;
+
+  const recon = document.getElementById('reconCaption');
+  if (hasRunMetrics()) {
+    const m = runMetrics();
+    const sc = statusCounts();
+    recon.innerHTML =
+      `${fmtNum(m.total_payments)} records &nbsp;·&nbsp; <span style="color:var(--success)">${fmtNum((sc.AUTO_MATCH||0)+(sc.AI_ASSISTED_MATCH||0))} automatically reconciled</span> &nbsp;·&nbsp; <span style="color:var(--error)">${fmtNum(sc.EXCEPTION||0)} sent for review</span>`;
+  } else {
+    recon.innerHTML = `Run <b class="mono">${escapeHtml(state.runId)}</b> is ${escapeHtml(runStatus())} — batch totals are unavailable, so the rows below are only what this run recorded before it stopped.`;
+  }
 
   const cols = ['payment_id', 'customer_name', 'amount', 'status', 'category', 'matched_bank_ref', 'confidence', 'method', 'ai_used'];
   document.querySelector('#decisionsTable thead').innerHTML = `<tr>${cols.map((c) => `<th>${c.replace(/_/g, ' ')}</th>`).join('')}</tr>`;
   const tbody = document.querySelector('#decisionsTable tbody');
-  if (data.results.length === 0) {
+  if (!append && data.results.length === 0) {
     tbody.innerHTML = `<tr><td colspan="${cols.length}"><div class="empty-state"><div class="es-title">No matching records</div><div class="es-body">No decisions match this filter combination.</div></div></td></tr>`;
+    renderPager('decisionsPager', 0, data.total, false, () => refreshDecisions(true));
     return;
   }
-  tbody.innerHTML = data.results.map((d) => `
-    <tr data-payment="${d.payment_id}" tabindex="0">
-      <td class="mono">${d.payment_id}</td>
+  const rowsHtml = data.results.map((d) => `
+    <tr data-payment="${escapeHtml(d.payment_id)}" tabindex="0">
+      <td class="mono">${escapeHtml(d.payment_id)}</td>
       <td>${escapeHtml(d.customer_name || '')}</td>
       <td class="mono">${fmtAmount(d.amount)}</td>
       <td>${statusBadge(d.status)}</td>
-      <td class="muted">${catLabel(d.category)}</td>
-      <td class="mono muted">${d.matched_bank_ref || '—'}</td>
+      <td class="muted">${escapeHtml(catLabel(d.category))}</td>
+      <td class="mono muted">${escapeHtml(d.matched_bank_ref || '—')}</td>
       <td class="mono">${d.confidence ?? '—'}</td>
-      <td class="muted">${d.method}</td>
+      <td class="muted">${escapeHtml(d.method || '')}</td>
       <td>${d.ai_used ? 'yes' : 'no'}</td>
     </tr>`).join('');
-  tbody.querySelectorAll('tr').forEach((row) => row.addEventListener('click', () => openDecisionDrawer(row.dataset.payment)));
+  if (append) tbody.insertAdjacentHTML('beforeend', rowsHtml);
+  else tbody.innerHTML = rowsHtml;
+  // onclick (not addEventListener) so re-binding after an append never doubles up
+  tbody.querySelectorAll('tr[data-payment]').forEach((row) => {
+    row.onclick = () => openDecisionDrawer(row.dataset.payment);
+  });
+  renderPager('decisionsPager', state.decisionsShown, data.total, false, () => refreshDecisions(true));
 }
-document.getElementById('filterStatus').addEventListener('change', refreshDecisions);
-document.getElementById('filterCategory').addEventListener('change', refreshDecisions);
+document.getElementById('filterStatus').addEventListener('change', () => refreshDecisions());
+document.getElementById('filterCategory').addEventListener('change', () => refreshDecisions());
 
 async function openDecisionDrawer(paymentId) {
   try {
-    const detail = await apiGet(`/decisions/${paymentId}`, { run_id: state.runId });
+    // encodeURIComponent: payment_id comes from the source CSV, so a value containing / ? or #
+    // would otherwise rewrite the request path instead of being sent as one path segment.
+    const detail = await apiGet(`/decisions/${encodeURIComponent(paymentId)}`, { run_id: state.runId });
     const { payment, decision, audit_trail, exception } = detail;
     const candidate = extractCandidate(decision);
     document.getElementById('drawerTitle').textContent = paymentId;
@@ -607,14 +847,14 @@ async function openDecisionDrawer(paymentId) {
     if (exception) {
       resolveButtonHtml = exception.resolved
         ? `<span class="badge resolved" style="margin-top:14px">Marked resolved</span>`
-        : `<button class="btn btn-danger-outline" id="btnResolve" style="margin-top:14px" data-exc="${exception.id}">Resolve manually</button>`;
+        : `<button class="btn btn-danger-outline" id="btnResolve" style="margin-top:14px" data-exc="${Number(exception.id)}">Mark reviewed</button>`;
     }
 
     const confidencePct = decision.confidence !== null && decision.confidence !== undefined
       ? `<div class="confidence-block"><span class="cv" style="color:${decision.status === 'EXCEPTION' ? 'var(--error)' : 'var(--success)'}">${decision.confidence}%</span><span class="cl">confidence</span></div>` : '';
 
     document.getElementById('drawerBody').innerHTML = `
-      <div>${statusBadge(decision.status)} ${decision.category ? `<span class="badge exception" style="margin-left:6px">${catLabel(decision.category)}</span>` : ''}</div>
+      <div>${statusBadge(decision.status)} ${decision.category ? `<span class="badge exception" style="margin-left:6px">${escapeHtml(catLabel(decision.category))}</span>` : ''}</div>
       <h4>Evidence checklist</h4>
       ${renderChecklist(candidate)}
       ${confidencePct}
@@ -642,10 +882,13 @@ async function openDecisionDrawer(paymentId) {
 
 async function resolveException(exceptionId, btnEl) {
   try {
-    await apiPost(`/exceptions/${exceptionId}/resolve`);
+    // The endpoint is idempotent: already_reviewed tells us whether this call was
+    // the one that flipped the row, so the operator is not told a fresh review
+    // happened when the exception was already signed off.
+    const res = await apiPost(`/exceptions/${encodeURIComponent(exceptionId)}/resolve`);
     if (btnEl) btnEl.outerHTML = `<span class="badge resolved" style="margin-top:14px">Marked resolved</span>`;
-    toast('Exception marked as reviewed.', 'success');
-    refreshExceptions();
+    toast(res && res.already_reviewed ? 'Exception was already marked reviewed.' : 'Exception marked as reviewed.', 'success');
+    refreshExceptions(true);
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -667,34 +910,51 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDra
 // Exceptions
 // ---------------------------------------------------------------------------
 
-async function refreshExceptions() {
+// keepLimit=true preserves the page size raised by "Load more"; a filter change or a
+// run change resets it. /exceptions has no offset parameter, so paging means asking
+// for a bigger limit, capped by the API at API_MAX_LIMIT.
+async function refreshExceptions(keepLimit = false) {
   if (!state.runId) return;
-  const m = state.runDetail.metrics;
-  const total = m.status_counts.EXCEPTION || 0;
-  document.getElementById('excCount').textContent = total || '';
-  document.getElementById('excHeaderCount').textContent = total === 0
-    ? 'All records were reconciled safely.'
-    : `${fmtNum(total)} record${total === 1 ? '' : 's'} require attention.`;
+  if (!keepLimit) state.excLimit = PAGE_STEP;
+  const complete = hasRunMetrics();
+  const sc = statusCounts();
+  const cc = Object.entries(runMetrics().category_counts || {}).sort((a, b) => b[1] - a[1]);
+
+  const data = await apiGet('/exceptions', { run_id: state.runId, category: state.excCategory, limit: state.excLimit });
+  // data.total is scoped to the active category filter, so it only stands in for the
+  // run-wide exception count when no filter is applied and metrics are missing.
+  const runTotal = complete ? (sc.EXCEPTION || 0) : (state.excCategory ? null : data.total);
+
+  document.getElementById('excCount').textContent = runTotal || '';
+  document.getElementById('excHeaderCount').textContent = runTotal === null
+    ? `Run ${runStatus()} — the complete exception count for this run is not available.`
+    : runTotal === 0
+      ? 'All records were reconciled safely.'
+      : `${fmtNum(runTotal)} record${runTotal === 1 ? '' : 's'} require attention.`;
 
   // summary strip: total + top categories, all from real category_counts
-  const cc = Object.entries(m.category_counts || {}).sort((a, b) => b[1] - a[1]);
-  const summaryCards = [heroKpi('Total exceptions', fmtNum(total), total > 0 ? 'error' : '', 'alertTriangle', total > 0 ? 'error' : 'neutral')]
-    .concat(cc.slice(0, 3).map(([k, v]) => heroKpi(catLabel(k), fmtNum(v), '', 'clipboardList', 'neutral')));
+  const summaryCards = [heroKpi('Total exceptions', runTotal === null ? '—' : fmtNum(runTotal), runTotal > 0 ? 'error' : '', 'alertTriangle', runTotal > 0 ? 'error' : 'neutral')]
+    .concat(cc.slice(0, 3).map(([k, v]) => heroKpi(escapeHtml(catLabel(k)), fmtNum(v), '', 'clipboardList', 'neutral')));
   document.getElementById('excSummary').innerHTML = summaryCards.join('');
 
   // filter chips, built from real categories present in meta + counts from this run
-  const chipEntries = [['', 'All', total]].concat(cc.map(([k, v]) => [k, catLabel(k), v]));
+  const chipEntries = [['', 'All', runTotal === null ? undefined : runTotal]].concat(cc.map(([k, v]) => [k, catLabel(k), v]));
   buildChips(document.getElementById('excFilterChips'), chipEntries, state.excCategory, (val) => {
     state.excCategory = val;
     refreshExceptions();
   });
 
-  const data = await apiGet('/exceptions', { run_id: state.runId, category: state.excCategory, limit: 300 });
+  const loadMore = () => {
+    state.excLimit = Math.min(state.excLimit + PAGE_STEP, API_MAX_LIMIT);
+    refreshExceptions(true);
+  };
   const list = document.getElementById('exceptionsList');
   if (data.results.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="es-title">No exceptions</div><div class="es-body">${total === 0 ? 'All records in this run were reconciled safely.' : 'No exceptions match this filter.'}</div></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="es-title">No exceptions</div><div class="es-body">${runTotal === 0 ? 'All records in this run were reconciled safely.' : 'No exceptions match this filter.'}</div></div>`;
+    renderPager('exceptionsPager', 0, data.total, state.excLimit >= API_MAX_LIMIT, loadMore);
     return;
   }
+  renderPager('exceptionsPager', data.results.length, data.total, state.excLimit >= API_MAX_LIMIT, loadMore);
   list.innerHTML = data.results.map((r, i) => {
     const ev = r.evidence || {};
     const candidate = (ev.evidence_found && ev.evidence_found.candidates_considered && ev.evidence_found.candidates_considered[0]) || null;
@@ -702,8 +962,8 @@ async function refreshExceptions() {
       <div class="exc-head" onclick="document.getElementById('exc-${i}').classList.toggle('open')">
         ${icon('alertTriangle', 'exc-icon')}
         <span class="chev">&#9656;</span>
-        <span class="exc-title"><span class="pid">${r.payment_id}</span> — ${escapeHtml(r.customer_name || '')} — ${fmtAmount(r.amount)}</span>
-        ${r.resolved ? '<span class="badge resolved">Resolved</span>' : `<span class="badge exception">${icon('alertTriangle', 'badge-icon')}${catLabel(r.category)}</span>`}
+        <span class="exc-title"><span class="pid">${escapeHtml(r.payment_id)}</span> — ${escapeHtml(r.customer_name || '')} — ${fmtAmount(r.amount)}</span>
+        ${r.resolved ? '<span class="badge resolved">Resolved</span>' : `<span class="badge exception">${icon('alertTriangle', 'badge-icon')}${escapeHtml(catLabel(r.category))}</span>`}
       </div>
       <div class="exc-body"><div class="exc-body-inner">
         <h4 style="margin-top:0">Evidence checklist</h4>
@@ -712,7 +972,7 @@ async function refreshExceptions() {
           <dt>Why unresolved</dt><dd>${escapeHtml(ev.why_unresolved || r.reason || '')}</dd>
           <dt>Suggested next action</dt><dd>${escapeHtml(r.suggested_action || '')}</dd>
         </dl>
-        ${r.resolved ? '' : `<button class="btn btn-danger-outline" data-exc="${r.id}" onclick="resolveException(${r.id}, this)">Resolve manually</button>`}
+        ${r.resolved ? '' : `<button class="btn btn-danger-outline" data-exc="${Number(r.id)}" onclick="resolveException(${Number(r.id)}, this)">Mark reviewed</button>`}
       </div></div>
     </div>`;
   }).join('');
@@ -737,10 +997,38 @@ function cmpRow(label, us, them, higherIsBetter = true) {
   </div>`;
 }
 
+// The baseline is comparable with a run's evaluation only when it was scored on
+// that run's own dataset snapshot.
+function baselineIsRunScoped() {
+  const b = state.baseline;
+  if (!b) return false;
+  return b.source !== 'current_raw_file_fallback' && (!b.run_id || b.run_id === state.runId);
+}
+
 function renderEvaluation() {
   const ev = state.evaluation;
-  if (!ev) return;
+  if (!ev) {
+    // Never leave the previous run's numbers on screen: a RUNNING or FAILED run has
+    // no evaluation of its own, and showing a stale one attributes it to this run.
+    document.getElementById('evalRecordCaption').innerHTML =
+      `<span style="color:var(--warning)">No evaluation for run <b class="mono">${escapeHtml(String(state.runId || '—'))}</b> (status ${escapeHtml(runStatus())}) — a run is only scored once it completes.</span>`;
+    document.getElementById('evalHeroKpis').innerHTML = '';
+    document.getElementById('evalZeroBanner').style.display = 'none';
+    document.getElementById('baselineCompare').innerHTML = '<div class="empty-state"><div class="es-body">No baseline comparison is available for this run.</div></div>';
+    document.querySelector('#caseTypeTable thead').innerHTML = '';
+    document.querySelector('#caseTypeTable tbody').innerHTML = '';
+    return;
+  }
   const o = ev.outcomes;
+
+  // A run that predates per-run ground-truth snapshots cannot be re-scored against
+  // the data it actually saw, so its evaluation is not reproducible. Say exactly that.
+  const gtSourceNote = ev.ground_truth_source === 'current_raw_file_fallback'
+    ? ' <span style="color:var(--warning)">(this run predates per-run ground-truth snapshots — scored against the current on-disk ground truth, which may have changed since the run, so this evaluation is NOT reproducible)</span>'
+    : '';
+  document.getElementById('evalRecordCaption').innerHTML =
+    `${fmtNum(ev.source_records)} ground-truth records &nbsp;·&nbsp; ${fmtNum(ev.joined_records)} evaluated &nbsp;·&nbsp; ` +
+    `${fmtNum(ev.dropped_records)} dropped at ingestion (not fabricated as correct or incorrect)${gtSourceNote}`;
 
   document.getElementById('evalHeroKpis').innerHTML = [
     heroKpi('Automation precision', fmtPct(ev.automation_precision), 'success', 'checkCircle', 'success'),
@@ -769,15 +1057,27 @@ function renderEvaluation() {
     options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#1B1A16' } }, x: { grid: { display: false } } } },
   });
 
+  const baselineEl = document.getElementById('baselineCompare');
   if (state.baseline) {
     const b = state.baseline;
-    document.getElementById('baselineCompare').innerHTML = `
-      <div class="cmp-legend"><span><span class="sw" style="background:var(--success)"></span>LedgerProof</span><span><span class="sw" style="background:var(--error)"></span>Naive baseline</span></div>
+    // The comparison is only apples-to-apples when the baseline was scored on this
+    // run's own snapshot. A fallback source, or a snapshot belonging to another run,
+    // means two different datasets are being put side by side.
+    const notRunScoped = !baselineIsRunScoped();
+    const caveat = notRunScoped
+      ? `<div class="muted" style="color:var(--warning);font-size:12.5px;margin-bottom:var(--sp-3)">Not run-scoped: this baseline was computed on ${b.source === 'current_raw_file_fallback' ? 'the current on-disk dataset' : `run ${escapeHtml(String(b.run_id))}`}, not on the dataset of run ${escapeHtml(String(state.runId))}. Treat the two columns as different datasets, not as a like-for-like comparison.</div>`
+      : '';
+    baselineEl.innerHTML = `
+      ${caveat}
+      <div class="cmp-legend"><span><span class="sw" style="background:var(--success)"></span>Veyra</span><span><span class="sw" style="background:var(--error)"></span>Naive baseline</span></div>
       ${cmpRow('Precision', ev.automation_precision, b.automation_precision)}
       ${cmpRow('Coverage', ev.coverage_recall, b.coverage_recall)}
       ${cmpRow('Safety rate', ev.safety_rate, b.safety_rate)}
       ${cmpRow('False-match rate', ev.false_match_rate, b.false_match_rate, false)}
     `;
+  } else {
+    // No baseline for this run: an empty panel is honest, a stale one is not.
+    baselineEl.innerHTML = '<div class="empty-state"><div class="es-body">No baseline comparison is available for this run.</div></div>';
   }
 
   const rows = Object.entries(ev.per_case_type).map(([ct, v]) => {
@@ -791,7 +1091,7 @@ function renderEvaluation() {
   document.querySelector('#caseTypeTable thead').innerHTML = `<tr>${cols.map((c) => `<th>${c.replace(/_/g, ' ')}</th>`).join('')}</tr>`;
   document.querySelector('#caseTypeTable tbody').innerHTML = rows.map((r) => `
     <tr>
-      <td>${r.ct}</td><td class="mono">${r.total}</td><td class="mono">${r.rate === null ? '—' : fmtPct(r.rate, 0)}</td>
+      <td>${escapeHtml(r.ct)}</td><td class="mono">${r.total}</td><td class="mono">${r.rate === null ? '—' : fmtPct(r.rate, 0)}</td>
       <td class="mono" style="color:var(--success)">${r.CORRECT_AUTO}</td>
       <td class="mono" style="color:var(--error)">${r.INCORRECT_AUTO}</td>
       <td class="mono" style="color:var(--warning)">${r.MISSED_OPPORTUNITY}</td>
@@ -812,12 +1112,23 @@ function logLine(time, event, eventCls, detailHtml) {
   </div>`;
 }
 
-async function refreshAudit() {
+// keepLimit=true preserves a page size raised by "Load more". /audit has no offset
+// parameter either, so paging raises the limit up to the API cap.
+async function refreshAudit(keepLimit = false) {
   if (!state.runId) return;
+  if (!keepLimit) state.auditLimit = PAGE_STEP;
   const paymentId = document.getElementById('auditPaymentFilter').value.trim();
-  const data = await apiGet('/audit', { run_id: state.runId, payment_id: paymentId || undefined, limit: 300 });
+  const data = await apiGet('/audit', {
+    run_id: state.runId, payment_id: paymentId || undefined, limit: state.auditLimit,
+  });
   const entries = [...data.results].reverse(); // API returns newest-first; a log reads oldest-first
   const container = document.getElementById('auditLog');
+  const truncated = entries.length < data.total;
+  const loadMore = () => {
+    state.auditLimit = Math.min(state.auditLimit + PAGE_STEP, API_MAX_LIMIT);
+    refreshAudit(true);
+  };
+  renderPager('auditPager', entries.length, data.total, state.auditLimit >= API_MAX_LIMIT, loadMore);
 
   if (entries.length === 0 && !paymentId) {
     container.innerHTML = '<div class="empty-state"><div class="es-title">No audit entries</div><div class="es-body">Run reconciliation to generate an audit trail.</div></div>';
@@ -829,36 +1140,52 @@ async function refreshAudit() {
   }
 
   const lines = [];
-  const m = state.runDetail && state.runDetail.metrics;
-  if (!paymentId && m) {
+  const m = runMetrics();
+  // The API returns newest-first, so a truncated page is the TAIL of the log: claiming
+  // it starts at RECONCILIATION_STARTED would be a lie about what is on screen.
+  const framed = !paymentId && hasRunMetrics() && !truncated;
+  if (truncated && !paymentId) {
+    lines.push(logLine('—', 'LOG_TRUNCATED', 'system',
+      `showing the most recent <b>${fmtNum(entries.length)}</b> of <b>${fmtNum(data.total)}</b> entries — load more to reach the start of the batch`));
+  }
+  if (framed) {
     lines.push(logLine(fmtTime(state.runDetail.started_at), 'RECONCILIATION_STARTED', 'system',
-      `batch=<b>${state.runId}</b> &nbsp; records=<b>${m.total_payments}</b>`));
+      `batch=<b>${escapeHtml(state.runId)}</b> &nbsp; records=<b>${fmtNum(m.total_payments)}</b>`));
   }
   entries.forEach((a) => {
     const time = fmtTime(a.created_at);
-    if (a.status === 'EXCEPTION') {
-      lines.push(logLine(time, 'MATCH_REJECTED', 'rejected', `<b>${a.payment_id}</b> &nbsp; reason=${catLabel(a.category)}`));
+    if (a.actor === 'human_reviewer' || a.status === 'EXCEPTION_REVIEWED') {
+      // A human review never changes the engine's decision -- it is its own provenance event.
+      lines.push(logLine(time, 'HUMAN_REVIEWED', 'system', `<b>${escapeHtml(a.payment_id)}</b> &nbsp; reason=${escapeHtml(catLabel(a.category))} &nbsp; actor=human_reviewer`));
+    } else if (a.status === 'EXCEPTION') {
+      lines.push(logLine(time, 'MATCH_REJECTED', 'rejected', `<b>${escapeHtml(a.payment_id)}</b> &nbsp; reason=${escapeHtml(catLabel(a.category))}`));
     } else {
-      lines.push(logLine(time, 'MATCH_ACCEPTED', 'accepted', `<b>${a.payment_id}</b> &nbsp; confidence=${a.confidence ?? '—'} &nbsp; actor=${a.actor}`));
+      lines.push(logLine(time, 'MATCH_ACCEPTED', 'accepted', `<b>${escapeHtml(a.payment_id)}</b> &nbsp; confidence=${a.confidence ?? '—'} &nbsp; actor=${escapeHtml(a.actor || '')}`));
     }
   });
-  if (!paymentId && m) {
-    const auto = (m.status_counts.AUTO_MATCH || 0) + (m.status_counts.AI_ASSISTED_MATCH || 0);
+  if (framed) {
+    const sc = statusCounts();
+    const auto = (sc.AUTO_MATCH || 0) + (sc.AI_ASSISTED_MATCH || 0);
     lines.push(logLine(fmtTime(state.runDetail.finished_at), 'BATCH_COMPLETED', 'system',
-      `matched=<b>${auto}</b> &nbsp; exceptions=<b>${m.status_counts.EXCEPTION || 0}</b>`));
+      `matched=<b>${auto}</b> &nbsp; exceptions=<b>${sc.EXCEPTION || 0}</b>`));
+  } else if (!paymentId && !hasRunMetrics()) {
+    lines.push(logLine(fmtTime(state.runDetail && state.runDetail.finished_at), `BATCH_${escapeHtml(runStatus())}`, 'rejected',
+      `run <b>${escapeHtml(state.runId)}</b> did not report batch totals${state.runDetail && state.runDetail.error ? ` &nbsp; error=${escapeHtml(String(state.runDetail.error))}` : ''}`));
   }
   container.innerHTML = lines.join('');
 }
 let auditDebounce;
 document.getElementById('auditPaymentFilter').addEventListener('input', () => {
   clearTimeout(auditDebounce);
-  auditDebounce = setTimeout(refreshAudit, 300);
+  auditDebounce = setTimeout(() => refreshAudit(), 300);
 });
 
 // ---------------------------------------------------------------------------
 // dataset generation / reconciliation actions (shared by global controls + hero CTAs)
 // ---------------------------------------------------------------------------
 
+// Returns true only when a new dataset actually replaced the previous one. A failed
+// generation must never let the caller proceed to reconcile the stale dataset.
 async function generateDataset() {
   const btns = [document.getElementById('btnGenerate')];
   const status = document.getElementById('controlStatus');
@@ -870,14 +1197,18 @@ async function generateDataset() {
     const summary = await apiPost('/dataset/generate', { seed, size });
     status.textContent = `Generated ${summary.payments} payments, ${summary.bank_settlements} bank rows, ${summary.invoices} invoices.`;
     toast('Dataset generated.');
+    return true;
   } catch (e) {
     toast(e.message, 'error');
     status.textContent = '';
+    return false;
   } finally {
     btns.forEach((b) => b.disabled = false);
   }
 }
 
+// Returns the run's metrics on success, or null on failure (having already surfaced
+// the error as a toast). Callers must treat a null return as "do not show success".
 async function runReconciliation() {
   const btns = [document.getElementById('btnRun'), document.getElementById('btnRunHero')].filter(Boolean);
   const status = document.getElementById('controlStatus');
@@ -886,13 +1217,16 @@ async function runReconciliation() {
   try {
     if (!(await apiGet('/runs', { limit: 1 }).then(() => true).catch(() => false))) throw new Error('API unreachable.');
     const metrics = await apiPost('/reconcile/run');
-    status.textContent = `Run ${metrics.run_id} complete: ${metrics.total_payments} records in ${metrics.total_processing_seconds}s`;
+    status.textContent = `Run ${metrics.run_id} complete: ${metrics.total_payments} records in ${fmtSeconds(metrics.total_processing_seconds)}`;
     toast('Reconciliation complete.', 'success');
     await loadRuns(metrics.run_id);
     await loadRunData();
+    return metrics;
   } catch (e) {
     toast(e.message, 'error');
     status.textContent = '';
+    state.lastRunError = e.message;
+    return null;
   } finally {
     btns.forEach((b) => b.disabled = false);
   }
@@ -900,7 +1234,11 @@ async function runReconciliation() {
 
 document.getElementById('btnGenerate').addEventListener('click', generateDataset);
 document.getElementById('btnRun').addEventListener('click', runReconciliationWithProgress);
-document.getElementById('btnGenerateEmpty').addEventListener('click', async () => { await generateDataset(); await runReconciliation(); });
+// A failed generation leaves the previous dataset in place: reconcile nothing.
+document.getElementById('btnGenerateEmpty').addEventListener('click', async () => {
+  if (!(await generateDataset())) return;
+  await runReconciliation();
+});
 
 // ---------------------------------------------------------------------------
 // AI provider settings modal (bring-your-own-key)
@@ -932,8 +1270,24 @@ function populateModelOptions(providerKey) {
   }
   modelSelect.style.display = 'block';
   modelCustom.style.display = 'none';
-  modelSelect.innerHTML = preset.models.map((m) => `<option value="${m}">${m}</option>`).join('')
+  modelSelect.innerHTML = preset.models.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
     + '<option value="__custom__">Custom model name…</option>';
+}
+
+function updateKeyHint(providerKey) {
+  // An API key is only valid for the provider that issued it, so the backend clears the stored
+  // key on a provider switch (see app/settings.update). Say so before the operator hits Save,
+  // otherwise "AI disabled" after switching looks like a bug rather than the intended behavior.
+  const hint = document.getElementById('settingsKeyHint');
+  const providerChanged = settingsData && providerKey !== settingsData.provider;
+  if (providerChanged) {
+    hint.textContent = 'Provider changed — enter a new API key to enable AI. '
+      + 'The previous provider\'s key does not carry over and will be cleared on save.';
+    return;
+  }
+  hint.textContent = settingsData && settingsData.key_hint
+    ? `Currently configured: key ending in ${settingsData.key_hint}. Leave blank to keep it.`
+    : 'No API key configured yet -- AI reasoning falls back to explicit exceptions.';
 }
 
 function applyProviderPreset(providerKey, keepCurrentValues) {
@@ -952,6 +1306,7 @@ function applyProviderPreset(providerKey, keepCurrentValues) {
   } else {
     keyLink.style.display = 'none';
   }
+  updateKeyHint(providerKey);
 }
 
 async function loadSettingsModal() {
@@ -963,7 +1318,7 @@ async function loadSettingsModal() {
   }
   const providerSelect = document.getElementById('settingsProvider');
   providerSelect.innerHTML = Object.entries(settingsData.presets)
-    .map(([key, p]) => `<option value="${key}">${p.label}</option>`).join('');
+    .map(([key, p]) => `<option value="${escapeHtml(key)}">${escapeHtml(p.label)}</option>`).join('');
   providerSelect.value = settingsData.provider;
   applyProviderPreset(settingsData.provider, true);
 
@@ -980,9 +1335,7 @@ async function loadSettingsModal() {
     document.getElementById('settingsModelCustom').value = settingsData.model;
   }
   document.getElementById('settingsApiKey').value = '';
-  document.getElementById('settingsKeyHint').textContent = settingsData.key_hint
-    ? `Currently configured: key ending in ${settingsData.key_hint}. Leave blank to keep it.`
-    : 'No API key configured yet -- AI reasoning falls back to explicit exceptions.';
+  updateKeyHint(settingsData.provider);
   openSettingsModal();
 }
 
@@ -1004,7 +1357,7 @@ document.getElementById('settingsSave').addEventListener('click', async () => {
   try {
     const params = { provider, base_url: baseUrl, model };
     if (apiKeyInput !== '') params.api_key = apiKeyInput; // omit entirely to keep the existing key
-    const updated = await apiPost('/settings', params);
+    const updated = await apiPostJson('/settings', params);
     toast(updated.enabled ? `AI enabled: ${updated.provider} / ${updated.model}` : 'Settings saved (no API key set).', 'success');
     closeSettingsModal();
     const health = await apiGet('/health').catch(() => null);
@@ -1023,12 +1376,16 @@ document.getElementById('settingsSave').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 
 async function bootstrap() {
+  authPromptDismissed = false; // a fresh attempt may re-prompt if the API is still 401
+  authRequired = false;
   try {
     await loadMetaAndHealth();
     await loadRuns();
     await loadRunData();
   } catch (e) {
-    renderSystemStatus(false);
+    // A 401 means the API is up and refusing us: the auth banner explains that,
+    // so do not tell the operator to go restart a healthy backend.
+    renderSystemStatus(false, authRequired);
     toast(e.message, 'error');
   }
 }
@@ -1077,28 +1434,55 @@ async function runReconciliationWithProgress() {
   };
   setStage(0);
   const timer = setInterval(() => { idx = Math.min(idx + 1, RECONCILE_STAGE_ORDER.length - 1); setStage(idx); }, 700);
+  let metrics = null;
   try {
-    await runReconciliation();
+    metrics = await runReconciliation();
+  } finally {
+    // The interval is client-side theatre for a server-side sequence: it must stop
+    // whether the run succeeded or not, or it keeps advancing stages after failure.
     clearInterval(timer);
-    RECONCILE_STAGE_ORDER.forEach((s) => stagesEl.querySelector(`[data-stage="${s}"]`).classList.add('done', 'active'));
-    const m = state.runDetail.metrics;
-    const sc = m.status_counts;
-    const reconciled = (sc.AUTO_MATCH || 0) + (sc.AI_ASSISTED_MATCH || 0);
-    const result = document.getElementById('reconcileResult');
+  }
+  const result = document.getElementById('reconcileResult');
+  if (!metrics) {
+    // runReconciliation already toasted the error; here we render an explicit failed
+    // state instead of leaving the stages "done" and reading stale/absent metrics.
+    RECONCILE_STAGE_ORDER.forEach((s) => {
+      const el = stagesEl.querySelector(`[data-stage="${s}"]`);
+      el.classList.remove('active');
+    });
     result.style.display = 'block';
     result.innerHTML = `
-      <div class="rr-label">records analyzed</div>
-      <div class="rr-total">${fmtNum(m.total_payments)}</div>
+      <div class="rr-label" style="color:var(--error)">reconciliation failed</div>
+      <div class="rr-total" style="color:var(--error)">—</div>
       <div class="rr-split">
-        <div class="rr-col safe"><b>${fmtNum(reconciled)}</b><span>safe to automate</span></div>
-        <div class="rr-col review"><b>${fmtNum(sc.EXCEPTION || 0)}</b><span>require review</span></div>
+        <div class="rr-col review"><b>—</b><span>no records were analyzed</span></div>
       </div>
-      <button class="btn btn-primary" style="margin-top:var(--sp-6)" id="btnReconcileDone">View results</button>`;
-    document.getElementById('btnReconcileDone').addEventListener('click', () => { closeReconcileModal(); switchView('overview'); });
-  } catch (e) {
-    clearInterval(timer);
-    closeReconcileModal();
+      <div class="muted" style="font-size:13px;max-width:420px;margin:var(--sp-4) auto 0">${escapeHtml(state.lastRunError || 'The reconciliation run did not complete.')}</div>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:var(--sp-6)">
+        <button class="btn" id="btnReconcileRetry">Try again</button>
+        <button class="btn btn-primary" id="btnReconcileClose">Close</button>
+      </div>`;
+    document.getElementById('btnReconcileClose').addEventListener('click', closeReconcileModal);
+    document.getElementById('btnReconcileRetry').addEventListener('click', () => {
+      result.style.display = 'none';
+      openReconcileModal();
+    });
+    return;
   }
+  RECONCILE_STAGE_ORDER.forEach((s) => stagesEl.querySelector(`[data-stage="${s}"]`).classList.add('done', 'active'));
+  const sc = metrics.status_counts || {};
+  const total = metrics.total_payments;
+  const reconciled = (sc.AUTO_MATCH || 0) + (sc.AI_ASSISTED_MATCH || 0);
+  result.style.display = 'block';
+  result.innerHTML = `
+    <div class="rr-label">records analyzed</div>
+    <div class="rr-total">${fmtNum(total)}</div>
+    <div class="rr-split">
+      <div class="rr-col safe"><b>${fmtNum(reconciled)}</b><span>safe to automate</span></div>
+      <div class="rr-col review"><b>${fmtNum(sc.EXCEPTION || 0)}</b><span>require review</span></div>
+    </div>
+    <button class="btn btn-primary" style="margin-top:var(--sp-6)" id="btnReconcileDone">View results</button>`;
+  document.getElementById('btnReconcileDone').addEventListener('click', () => { closeReconcileModal(); switchView('overview'); });
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,9 +1517,9 @@ if (!REDUCE_MOTION) requestAnimationFrame(tickScrolly);
 MOMENT_UPDATERS['moment-split'] = (p) => {
   const introEl = document.getElementById('momentSplitIntro');
   const resultEl = document.getElementById('momentSplitResult');
-  const total = state.runDetail ? state.runDetail.metrics.total_payments : null;
+  const total = hasRunMetrics() ? runMetrics().total_payments : null;
   if (total === null) { introEl.classList.add('in'); resultEl.classList.remove('in'); document.getElementById('momentSplitTotal').textContent = '—'; return; }
-  const sc = state.runDetail.metrics.status_counts;
+  const sc = statusCounts();
   const reconciled = (sc.AUTO_MATCH || 0) + (sc.AI_ASSISTED_MATCH || 0);
   const exceptions = sc.EXCEPTION || 0;
   introEl.classList.toggle('in', p < 0.55);
@@ -1151,8 +1535,8 @@ async function loadStoryExamples() {
   const matchedRow = state.recentPreview.find((d) => d.status !== 'EXCEPTION');
   const exceptionRow = state.recentPreview.find((d) => d.status === 'EXCEPTION');
   const [matched, exception] = await Promise.all([
-    matchedRow ? apiGet(`/decisions/${matchedRow.payment_id}`, { run_id: state.runId }) : null,
-    exceptionRow ? apiGet(`/decisions/${exceptionRow.payment_id}`, { run_id: state.runId }) : null,
+    matchedRow ? apiGet(`/decisions/${encodeURIComponent(matchedRow.payment_id)}`, { run_id: state.runId }) : null,
+    exceptionRow ? apiGet(`/decisions/${encodeURIComponent(exceptionRow.payment_id)}`, { run_id: state.runId }) : null,
   ]);
   state.storyExample = { matched, exception };
   renderMomentEvidence();
@@ -1164,7 +1548,7 @@ function renderMomentEvidence() {
   if (!ex) return;
   const { payment, decision } = ex;
   const candidate = extractCandidate(decision);
-  document.getElementById('momentEvidenceTxn').innerHTML = `<div class="mtc-id">${decision.payment_id || payment.payment_id}</div><div class="mtc-amount">${fmtAmount(payment.amount)}</div>`;
+  document.getElementById('momentEvidenceTxn').innerHTML = `<div class="mtc-id">${escapeHtml(decision.payment_id || payment.payment_id)}</div><div class="mtc-amount">${fmtAmount(payment.amount)}</div>`;
   document.getElementById('momentEvidenceRows').innerHTML = renderChecklist(candidate) + renderVerdict(decision);
   document.querySelectorAll('#momentEvidenceRows .check-row, #momentEvidenceRows .verdict-box').forEach((el, i) => {
     el.classList.add('moment-evidence-row');
@@ -1185,7 +1569,7 @@ function renderMomentException() {
   if (!ex) return;
   const { payment, decision } = ex;
   const candidate = extractCandidate(decision);
-  document.getElementById('momentExceptionTxn').innerHTML = `<div class="mtc-id">${decision.payment_id || payment.payment_id}</div><div class="mtc-amount">${fmtAmount(payment.amount)}</div>`;
+  document.getElementById('momentExceptionTxn').innerHTML = `<div class="mtc-id">${escapeHtml(decision.payment_id || payment.payment_id)}</div><div class="mtc-amount">${fmtAmount(payment.amount)}</div>`;
   document.getElementById('momentExceptionRows').innerHTML = renderChecklist(candidate) + renderVerdict(decision);
   document.querySelectorAll('#momentExceptionRows .check-row, #momentExceptionRows .verdict-box').forEach((el, i) => {
     el.classList.add('moment-evidence-row');

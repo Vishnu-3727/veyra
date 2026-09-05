@@ -7,6 +7,7 @@ textual similarity.
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -23,6 +24,8 @@ _SUFFIX_RE = re.compile(
 )
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9 ]+")
 _WS_RE = re.compile(r"\s+")
+# Fuzzy-similarity floor for calling a garbled/truncated reference a PARTIAL trace.
+_PARTIAL_REF_RATIO = 75
 
 
 def normalize_name(name: Optional[str]) -> str:
@@ -59,22 +62,31 @@ def parse_amount(value) -> Optional[float]:
     """Safely parse a monetary amount. Returns None for missing/corrupt input.
 
     Never raises -- callers treat None as "amount unavailable", which is a
-    validation failure, not a crash.
+    validation failure, not a crash. Only finite values are accepted: inf/-inf
+    (and NaN) are not monetary amounts and would silently poison every
+    downstream difference computation, so they are validation failures too.
     """
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        if value != value:  # NaN
+        try:
+            f = float(value)
+        except (OverflowError, ValueError):  # e.g. an int too large for a float
             return None
-        return round(float(value), 2)
+        if not math.isfinite(f):
+            return None
+        return round(f, 2)
     s = str(value).strip()
     if s == "" or s.lower() in {"nan", "none", "null"}:
         return None
     s = re.sub(r"[,\u20b9$\s]", "", s)
     try:
-        return round(float(s), 2)
+        f = float(s)
     except ValueError:
         return None
+    if not math.isfinite(f):
+        return None
+    return round(f, 2)
 
 
 def parse_date(value) -> Optional[date]:
@@ -106,6 +118,36 @@ def ref_fragment(reference_id: str) -> str:
     return r
 
 
+def normalized_bank_ref_text(*bank_texts: str) -> str:
+    """The single normalized haystack a payment reference is matched against.
+
+    Split out from `ref_match_type` so a reconciliation batch can normalize each bank record's
+    reference fields ONCE (see `app/candidates.BankCandidateIndex`) instead of re-normalizing
+    them for every payment compared against that record.
+    """
+    return " ".join(normalize_ref(t) for t in bank_texts if t)
+
+
+def ref_match_normalized(order_frag: str, combined: str) -> str:
+    """Classify reference strength from already-normalized inputs.
+
+    `order_frag` comes from `ref_fragment(order_id)`, `combined` from
+    `normalized_bank_ref_text(...)`. Returns "EXACT", "PARTIAL", or "NONE".
+    """
+    if not order_frag or not combined:
+        return "NONE"
+    if order_frag in combined:
+        return "EXACT"
+    # partial: trailing fragment (e.g. last 6 chars) present, or high partial-ratio.
+    if len(order_frag) >= 6 and order_frag[-6:] in combined:
+        return "PARTIAL"
+    # score_cutoff lets rapidfuzz abandon a comparison as soon as 75 is unreachable; the boolean
+    # outcome is identical (it returns 0 below the cutoff), it just stops computing sooner.
+    if fuzz.partial_ratio(order_frag, combined, score_cutoff=_PARTIAL_REF_RATIO) >= _PARTIAL_REF_RATIO:
+        return "PARTIAL"
+    return "NONE"
+
+
 def ref_match_type(order_id: str, *bank_texts: str) -> str:
     """Classify how strongly a payment's identifiers appear in bank-side text.
 
@@ -114,15 +156,4 @@ def ref_match_type(order_id: str, *bank_texts: str) -> str:
     field. PARTIAL means a meaningful fuzzy trace was found (garbled/truncated
     reference) but not a clean containment match.
     """
-    order_frag = ref_fragment(order_id)
-    combined = " ".join(normalize_ref(t) for t in bank_texts if t)
-    if not order_frag or not combined:
-        return "NONE"
-    if order_frag in combined:
-        return "EXACT"
-    # partial: trailing fragment (e.g. last 6 chars) present, or high partial-ratio
-    if len(order_frag) >= 6 and order_frag[-6:] in combined:
-        return "PARTIAL"
-    if fuzz.partial_ratio(order_frag, combined) >= 75:
-        return "PARTIAL"
-    return "NONE"
+    return ref_match_normalized(ref_fragment(order_id), normalized_bank_ref_text(*bank_texts))

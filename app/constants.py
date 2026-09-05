@@ -7,6 +7,18 @@ STATUS_EXCEPTION = "EXCEPTION"                # unresolved -- requires human rev
 
 MATCHED_STATUSES = (STATUS_AUTO_MATCH, STATUS_AI_ASSISTED_MATCH)
 
+# Audit-only status: a human reviewed an exception. It is NEVER a decision status -- the engine's
+# decision row is untouched -- so it deliberately does not appear in MATCHED_STATUSES or in the
+# decisions table's status vocabulary.
+STATUS_EXCEPTION_REVIEWED = "EXCEPTION_REVIEWED"
+
+# Run lifecycle. A run row is written at batch START as RUNNING, then moved to COMPLETED or
+# FAILED. A process killed mid-batch therefore stays RUNNING -- honest, and never mistaken for a
+# finished run by anything that summarizes or compares whole batches.
+RUN_RUNNING = "RUNNING"
+RUN_COMPLETED = "COMPLETED"
+RUN_FAILED = "FAILED"
+
 # Exception categories -- each maps to a human-readable explanation template
 CAT_NO_CANDIDATE = "NO_CANDIDATE"
 CAT_MULTIPLE_CANDIDATES = "MULTIPLE_CANDIDATES"
@@ -33,3 +45,8 @@ CATEGORY_LABELS = {
 INVOICE_FOUND_CONSISTENT = "found_consistent"
 INVOICE_FOUND_MISMATCH = "found_mismatch"
 INVOICE_NOT_FOUND = "not_found"
+INVOICE_AMBIGUOUS = "ambiguous"  # more than one invoice shares this payment's order_id
+# An invoice row for this order exists but was unusable as evidence (corrupt amount/fields).
+# Deliberately distinct from `not_found`: "no invoice" and "invoice we could not read" are
+# different facts for a reviewer.
+INVOICE_RECORD_INVALID = "record_invalid"

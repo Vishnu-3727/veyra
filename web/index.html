@@ -3,11 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LedgerProof — Financial Control Center</title>
-<meta name="description" content="LedgerProof — evidence-driven financial reconciliation. Match what you can prove. Surface what you can't.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23090908%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22%23D9A441%22 font-family=%22monospace%22>L</text></svg>">
+<title>Veyra — Financial Control Center</title>
+<meta name="description" content="Veyra — evidence-driven financial reconciliation. Match what you can prove. Surface what you can't.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23090908%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22%23D9A441%22 font-family=%22monospace%22>V</text></svg>">
 <link rel="stylesheet" href="styles.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<!-- Chart.js is vendored locally (web/vendor/chart.min.js, v4.4.4 UMD build) so the dashboard
+     works offline and behind blocked CDNs. app.js also degrades gracefully if it fails to load. -->
+<script src="vendor/chart.min.js"></script>
 </head>
 <body>
 
@@ -17,7 +19,7 @@
 <section class="landing" id="landing">
 
   <nav class="landing-nav">
-    <div class="mark"><span class="dot">§</span>LEDGERPROOF</div>
+    <div class="mark"><span class="dot">§</span>VEYRA</div>
     <div class="links">
       <a href="#moment-split">How it works</a>
       <a href="#moment-evaluation">Results</a>
@@ -32,14 +34,14 @@
         <h1>Financial reconciliation,<br>with evidence.</h1>
         <p class="quote">&ldquo;<b>Match what you can prove.</b> Surface what you can&rsquo;t.&rdquo; A control system for merchant finance operations — not a chatbot.</p>
         <div class="landing-cta-row">
-          <button class="btn btn-primary btn-lg" id="btnEnter">Open Control Center →</button>
+          <button class="btn btn-primary btn-lg" id="btnEnterHero">Open Control Center →</button>
           <a class="btn btn-ghost btn-lg" href="#moment-split">See how it works</a>
         </div>
         <div class="landing-status-line" id="landingStatusLine"></div>
       </div>
       <div class="hero-preview" id="heroPreview">
         <div class="hero-preview-card" id="heroPreviewCard">
-          <div class="hero-preview-chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">ledgerproof.app/overview</span></div>
+          <div class="hero-preview-chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">veyra / overview</span></div>
           <div class="hero-preview-body" id="heroPreviewBody">
             <div class="hpv-kpis">
               <div class="hpv-kpi"><div class="l">Records</div><div class="v">—</div></div>
@@ -59,7 +61,7 @@
       <div class="moment-stage" id="momentSplitIntro">
         <div class="landing-eyebrow reveal">01 · Financial data</div>
         <div class="moment-big-num" id="momentSplitTotal">—</div>
-        <div class="moment-big-label">financial records enter LedgerProof</div>
+        <div class="moment-big-label">financial records enter Veyra</div>
       </div>
       <div class="moment-stage" id="momentSplitResult">
         <div class="landing-eyebrow reveal">02 · Decision</div>
@@ -76,7 +78,7 @@
       <div class="moment-evidence-layout">
         <div class="moment-evidence-left">
           <div class="landing-eyebrow reveal">03 · Evidence</div>
-          <h2 class="reveal" style="font-size:36px;margin:0 0 var(--sp-3)">Why did LedgerProof trust this one?</h2>
+          <h2 class="reveal" style="font-size:36px;margin:0 0 var(--sp-3)">Why did Veyra trust this one?</h2>
           <p class="moment-fallback muted">Run reconciliation to see a real example here.</p>
           <div id="momentEvidenceTxn" class="moment-txn-card"></div>
         </div>
@@ -90,7 +92,7 @@
       <div class="moment-evidence-layout">
         <div class="moment-evidence-left">
           <div class="landing-eyebrow reveal" style="color:var(--error)">04 · But what about this?</div>
-          <h2 class="reveal" style="font-size:36px;margin:0 0 var(--sp-3)">LedgerProof doesn&rsquo;t force uncertain matches.</h2>
+          <h2 class="reveal" style="font-size:36px;margin:0 0 var(--sp-3)">Veyra doesn&rsquo;t force uncertain matches.</h2>
           <p class="moment-fallback muted">Run reconciliation to see a real example here.</p>
           <div id="momentExceptionTxn" class="moment-txn-card"></div>
         </div>
@@ -117,7 +119,7 @@
     <button class="btn btn-primary btn-lg" id="btnEnterFinal">Open Control Center →</button>
   </div>
 
-  <div class="landing-foot">LedgerProof — evidence-driven financial reconciliation, built for a fintech buildathon.</div>
+  <div class="landing-foot">Veyra — evidence-driven financial reconciliation, built for a fintech buildathon.</div>
 </section>
 
 <!-- ============================= APP SHELL ============================= -->
@@ -126,7 +128,7 @@
 
   <aside class="sidebar">
     <div class="sidebar-head">
-      <div class="sidebar-brand"><span class="mark-dot">§</span><span class="label">LedgerProof</span></div>
+      <div class="sidebar-brand"><span class="mark-dot">§</span><span class="label">Veyra</span></div>
       <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar">⟨⟩</button>
     </div>
     <div class="sidebar-tag">Financial Control</div>
@@ -173,7 +175,14 @@
         <button class="btn" id="btnRetryApi">Retry</button>
       </div>
 
-
+      <!-- Shown only when the API answers 401 (server-side API_AUTH_TOKEN is set). The token is
+           typed here and kept in sessionStorage for this tab only -- never in a committed file. -->
+      <div class="api-banner auth-banner" id="apiAuthBanner">
+        <span><b>API authentication is enabled.</b> Enter the dashboard API token to continue.</span>
+        <input type="password" id="apiTokenInput" placeholder="dashboard API token" autocomplete="off" spellcheck="false">
+        <button class="btn btn-primary" id="btnSaveApiToken">Save</button>
+        <button class="btn btn-ghost" id="btnDismissApiToken">Dismiss</button>
+      </div>
 
       <!-- ============================= OVERVIEW ============================= -->
       <section class="view active" id="view-overview">
@@ -192,12 +201,16 @@
           <button class="btn btn-primary" id="btnGenerateEmpty">Generate &amp; run</button>
         </div>
 
+        <!-- Shown when the selected run is RUNNING or FAILED: its metrics may be partial, so
+             the KPI grid below would either be blank or misleading. -->
+        <div class="empty-state" id="overviewIncomplete" style="display:none"></div>
+
         <div id="overviewData">
           <div class="hero-kpi-grid" id="heroKpis"></div>
           <div class="metric-secondary-grid" id="slimStats"></div>
 
           <div class="proof-strip" id="proofStrip" style="display:none">
-            <div class="proof-item"><span class="proof-num mono" style="color:var(--success)" id="proofUs">0.0%</span><span class="proof-label">LedgerProof false-match rate</span></div>
+            <div class="proof-item"><span class="proof-num mono" style="color:var(--success)" id="proofUs">0.0%</span><span class="proof-label">Veyra false-match rate</span></div>
             <span class="proof-vs">vs.</span>
             <div class="proof-item"><span class="proof-num mono" style="color:var(--error)" id="proofBaseline">34.2%</span><span class="proof-label">naive "closest-amount" baseline</span></div>
             <span class="proof-text">Same dataset, same scoring function — the only variable is evidence-gating. <a href="#" data-goto="evaluation" style="color:var(--accent-bright)">Full comparison →</a></span>
@@ -234,6 +247,7 @@
           <span class="muted mono" id="decisionsCount" style="font-size:12px;padding-bottom:8px"></span>
         </div>
         <div class="table-scroll"><table class="data-table" id="decisionsTable"><thead></thead><tbody></tbody></table></div>
+        <div class="pager" id="decisionsPager"></div>
       </section>
 
       <!-- ============================= EXCEPTIONS ============================= -->
@@ -245,12 +259,14 @@
           <div class="chip-row" id="excFilterChips"></div>
         </div>
         <div id="exceptionsList"></div>
+        <div class="pager" id="exceptionsPager"></div>
       </section>
 
       <!-- ============================= EVALUATION ============================= -->
       <section class="view" id="view-evaluation">
         <h2 class="section-title">Evaluation</h2>
-        <p class="section-desc">Measured against known ground truth. Every ground-truth payment is classified as either <strong>safely resolvable</strong> (a correct answer exists in the evidence) or <strong>not safely resolvable</strong> (no system — human or AI — could determine a unique correct answer). LedgerProof is scored on both correctness AND safety.</p>
+        <p class="section-desc">Measured against known ground truth. Every ground-truth payment is classified as either <strong>safely resolvable</strong> (a correct answer exists in the evidence) or <strong>not safely resolvable</strong> (no system — human or AI — could determine a unique correct answer). Veyra is scored on both correctness AND safety.</p>
+        <div class="section-status-line" id="evalRecordCaption"></div>
 
         <div class="hero-kpi-grid" id="evalHeroKpis"></div>
         <div class="zero-banner" id="evalZeroBanner" style="display:none"></div>
@@ -261,7 +277,7 @@
         </div>
 
         <div class="panel">
-          <h4 style="margin:0 0 4px;font-size:15px;font-weight:600">LedgerProof vs. naive matching</h4>
+          <h4 style="margin:0 0 4px;font-size:15px;font-weight:600">Veyra vs. naive matching</h4>
           <p class="muted" style="font-size:13px;max-width:760px;margin-bottom:var(--sp-4)">Same dataset. Same evaluation function. Different decision policy. The naive baseline always commits to the closest-amount bank record in the settlement window — no reference check, no name evidence, no duplicate detection, no ambiguity detection, no AI, no policy caps.</p>
           <div id="baselineCompare"></div>
         </div>
@@ -275,15 +291,16 @@
       <!-- ============================= AUDIT ============================= -->
       <section class="view" id="view-audit">
         <h2 class="section-title">Audit trail</h2>
-        <p class="section-desc">Immutable, append-only log of every decision: source records, actor, evidence, confidence, and timestamp.</p>
+        <p class="section-desc">Append-only log of every decision: source records, actor, evidence, confidence, and timestamp. Inserts only — never updated or deleted.</p>
         <div class="control-row" style="margin-bottom:var(--sp-4)">
           <div class="field"><label>Payment ID</label><input type="text" id="auditPaymentFilter" placeholder="pay_..." style="min-width:220px"></div>
         </div>
         <div class="log-scroll" id="auditLog"></div>
+        <div class="pager" id="auditPager"></div>
       </section>
 
       <footer class="app-footer">
-        <span>LedgerProof — evidence-driven financial reconciliation</span>
+        <span>Veyra — evidence-driven financial reconciliation</span>
         <span id="apiTarget" class="mono"></span>
       </footer>
     </div>

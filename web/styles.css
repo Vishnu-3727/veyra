@@ -1,5 +1,5 @@
 /* ==========================================================================
-   LedgerProof design system.
+   Veyra design system.
    "Evidence-driven financial reconciliation." A command-center product, not
    a chatbot or an admin template: warm near-black surfaces, a single brass
    accent used sparingly, one clean sans-serif for everything, monospace for
@@ -225,6 +225,30 @@ body.sidebar-collapsed .nav-item { justify-content: center; }
 .api-banner b { color: var(--error); }
 .api-banner button { margin-left: auto; }
 
+/* Auth variant: warning-toned, holds a token input plus two buttons, so the
+   single `margin-left:auto` push used by the offline banner does not apply. */
+.api-banner.auth-banner { background: var(--warning-soft); border-color: rgba(217,164,65,0.35); flex-wrap: wrap; }
+.api-banner.auth-banner b { color: var(--warning); }
+.api-banner.auth-banner button { margin-left: 0; }
+.api-banner.auth-banner span { margin-right: auto; }
+.api-banner.auth-banner input {
+  font-family: var(--font-mono); font-size: 13px; background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 10px; border-radius: var(--r-sm); min-width: 220px;
+}
+.api-banner.auth-banner input:focus { outline: none; border-color: var(--accent); }
+
+/* ---------- pagination footers (decisions / exceptions / audit) ---------- */
+
+.pager { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); font-size: 12px; }
+.pager:empty { margin-top: 0; }
+.pager .pager-count { font-family: var(--font-mono); color: var(--text-faint); }
+.pager .pager-note { color: var(--warning); }
+.pager .btn { padding: 6px 12px; font-size: 12px; }
+
+/* Chart.js is decorative here: if the library is missing the container keeps a
+   short notice and every number it would plot stays visible as text. */
+.chart-fallback { display: flex; align-items: center; justify-content: center; height: 100%; text-align: center; font-size: 12.5px; color: var(--text-faint); }
+
 /* ---------- controls row ---------- */
 
 .control-row { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
@@ -270,8 +294,10 @@ p.section-desc { color: var(--text-muted); margin: 0 0 var(--sp-6); max-width: 7
 
 /* ---------- KPI cards ---------- */
 
-.hero-kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-6); }
-@media (max-width: 1000px) { .hero-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+/* auto-fit, not a viewport breakpoint: these grids live inside the content column, whose width
+   depends on the sidebar state too -- keyed to the VIEWPORT they stayed 4-up at 1024px with only
+   ~710px of content available and pushed the page ~24-37px wider than the screen. */
+.hero-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-6); }
 
 .hero-kpi {
   background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--r-lg); padding: var(--sp-6) var(--sp-6) var(--sp-4);
@@ -285,8 +311,7 @@ p.section-desc { color: var(--text-muted); margin: 0 0 var(--sp-6); max-width: 7
 .hero-kpi-value.accent { color: var(--accent-bright); }
 .hero-kpi-sub { font-size: 11px; color: var(--text-faint); margin-top: var(--sp-1); }
 
-.metric-secondary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-6); }
-@media (max-width: 1000px) { .metric-secondary-grid { grid-template-columns: repeat(2, 1fr); } }
+.metric-secondary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-6); }
 .metric-secondary { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--r-md); padding: var(--sp-4); }
 .metric-secondary-value { display: block; font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--text-muted); letter-spacing: -0.01em; }
 .metric-secondary-label { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -319,10 +344,13 @@ p.section-desc { color: var(--text-muted); margin: 0 0 var(--sp-6); max-width: 7
 
 /* ---------- panels ---------- */
 
-.panel { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--r-lg); padding: var(--sp-6); }
+.panel { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--r-lg); padding: var(--sp-6); min-width: 0; }
 .panel + .panel { margin-top: var(--sp-4); }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
-@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+/* minmax(0, 1fr), not 1fr: a grid track's automatic minimum is its content's min-content, so a
+   single wide child (a ranked reason label, a mono run id) pushed the whole column -- and with
+   it the page -- past the viewport instead of wrapping inside it. */
+.two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+@media (max-width: 900px) { .two-col { grid-template-columns: minmax(0, 1fr); } }
 .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-4); }
 .panel-head h4 { margin: 0; font-size: 13px; color: var(--text-muted); font-weight: 700; letter-spacing: 0.01em; }
 .panel-head a.link { font-size: 12px; color: var(--accent-bright); }
@@ -331,7 +359,7 @@ p.section-desc { color: var(--text-muted); margin: 0 0 var(--sp-6); max-width: 7
 /* ---------- ranked reason list ---------- */
 
 .reason-list { display: flex; flex-direction: column; gap: var(--sp-2); }
-.reason-row { display: grid; grid-template-columns: 200px 1fr 34px; align-items: center; gap: var(--sp-3); }
+.reason-row { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr) 34px; align-items: center; gap: var(--sp-3); }
 .reason-row .rl-label { font-size: 12.5px; color: var(--text-muted); }
 .reason-row .rl-track { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
 .reason-row .rl-fill { height: 100%; background: var(--info); border-radius: 4px; }
@@ -365,7 +393,13 @@ p.section-desc { color: var(--text-muted); margin: 0 0 var(--sp-6); max-width: 7
 
 .table-scroll { max-height: 480px; overflow: auto; border: 1px solid var(--border-soft); border-radius: var(--r-lg); }
 table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; }
-.table-plain table.data-table, table.data-table.table-plain { min-width: 0; }
+/* The Overview preview is the one table with no horizontal scroll container, so it must fit
+   whatever width it is given: fixed layout shares the columns out, and its status badges are
+   allowed to wrap. Left as-is, their `nowrap` min-content (~735px) pushed the page sideways
+   whenever the content column was narrower than that -- at 1000-1024px with the sidebar
+   expanded, and on every phone. */
+.table-plain table.data-table, table.data-table.table-plain { min-width: 0; table-layout: fixed; }
+table.data-table.table-plain .badge { white-space: normal; }
 table.data-table th {
   text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--text-faint); font-weight: 700; padding: 10px 14px; border-bottom: 1px solid var(--border);
@@ -563,8 +597,38 @@ footer.app-footer { margin-top: var(--sp-12); padding-top: var(--sp-4); border-t
 @media (max-width: 620px) {
   .hero-kpi-grid { grid-template-columns: 1fr; }
   .topbar-right .field select#runSelect { min-width: 130px; }
-  .drawer { width: 100vw; }
+  /* `width: 100vw` alone was defeated by the base rule's `max-width: 92vw`, so the drawer
+     stayed 8vw short of full width and left a dead sliver of page visible beside it. */
+  .drawer { width: 100vw; max-width: 100vw; border-left: none; }
   .content { padding-left: var(--sp-5); padding-right: var(--sp-5); }
+  /* The evidence checklist is a 5-column grid (icon, label, value, 2x meta). Below ~620px the
+     two fixed leading columns leave too little room and the meta columns were silently clipped
+     mid-word -- on the drawer that IS the product's evidence view. Stack every cell after the
+     label under it instead, and let long values wrap rather than overflow. */
+  .check-row { grid-template-columns: 22px minmax(0, 1fr); row-gap: 3px; }
+  .check-row > * { min-width: 0; overflow-wrap: anywhere; }
+  .check-row > *:nth-child(n+3) { grid-column: 2; }
+  /* Tighter cells for the scroll-free Overview preview; its fixed layout and wrapping badges
+     are set unconditionally above. */
+  table.data-table.table-plain th, table.data-table.table-plain td { padding: 9px 8px; }
+}
+
+/* Small phones (iPhone SE 1st gen, folded cover screens). At 320px the landing nav's link row
+   did not wrap (its CTA pushed the page ~72px wider than the viewport), and inside the app the
+   topbar status pill and the 2-up secondary metric grid each overflowed by ~15-28px. */
+@media (max-width: 400px) {
+  .landing { overflow-x: hidden; }
+  .landing-nav { padding-left: var(--sp-4); padding-right: var(--sp-4); gap: var(--sp-3); flex-wrap: wrap; }
+  .landing-nav .links { gap: var(--sp-4); flex-wrap: wrap; justify-content: flex-end; }
+  .landing-nav .links a { font-size: 12px; }
+  .landing-nav .links .btn { padding: 7px 12px; font-size: 12px; }
+  .moment-evidence-layout { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+  .topbar { flex-wrap: wrap; gap: var(--sp-2); }
+  .topbar-right { min-width: 0; max-width: 100%; }
+  .topbar-right .status-pill { max-width: 100%; white-space: normal; }
+  .metric-secondary-grid { grid-template-columns: 1fr; }
+  .metric-secondary { min-width: 0; }
+  .metric-secondary-value, .metric-secondary-label { overflow-wrap: anywhere; }
 }
 
 /* ==========================================================================

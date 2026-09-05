@@ -1,5 +1,9 @@
-fastapi
-uvicorn[standard]
-rapidfuzz
-python-dotenv
-openai
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+rapidfuzz==3.14.5
+python-dotenv==1.2.3
+openai==3.7.0
+# Test-only: starlette's TestClient (used by tests/test_api.py) needs an httpx-compatible client.
+# Pinned explicitly so the API tests are reproducible rather than depending on a transitive pull.
+httpx2==2.12.0
+pytest==9.1.1

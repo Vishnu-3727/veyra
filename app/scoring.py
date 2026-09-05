@@ -47,6 +47,17 @@ def _is_exact_amount(c: Candidate, t: Thresholds) -> bool:
     return c.amount_diff_abs <= t.exact_amount_tolerance_abs or c.amount_diff_pct <= t.exact_amount_tolerance_pct
 
 
+def _date_within_window(c: Candidate, t: Thresholds) -> bool:
+    """Settlement date must fall within [0, settlement_window_days] of the payment date for a
+    candidate to be auto-matched. An exact reference/amount can still surface a candidate whose
+    date is outside this window (see app/candidates.py), but candidate generation and the
+    auto-match decision are deliberately separate concerns: surfacing suspicious evidence is fine,
+    approving it automatically is not. A reference collision (e.g. a reused/duplicate order
+    token) plus an out-of-window date is exactly the conflicting-evidence case that should be
+    reviewed, not silently trusted."""
+    return 0 <= c.date_diff_days <= t.settlement_window_days
+
+
 def _is_plausible(c: Candidate, t: Thresholds) -> bool:
     """A candidate is a real contender (not blocking noise) if it has a
     strong reference trace, or a good-enough amount+name combination."""
@@ -60,21 +71,34 @@ def _is_plausible(c: Candidate, t: Thresholds) -> bool:
 
 
 def _single_candidate_outcome(c: Candidate, thresholds: Thresholds, considered, rejected, dup_refs) -> DeterministicOutcome:
-    if c.ref_match == "EXACT" and _is_exact_amount(c, thresholds):
+    date_ok = _date_within_window(c, thresholds)
+    strong_ref_amount = c.ref_match == "EXACT" and _is_exact_amount(c, thresholds)
+    strong_amount_name = _is_exact_amount(c, thresholds) and c.name_sim >= thresholds.high_name_similarity
+
+    if strong_ref_amount and date_ok:
         return DeterministicOutcome(
             status=C.STATUS_AUTO_MATCH, matched=c, duplicate_refs=dup_refs, considered=considered, rejected=rejected,
-            reason="Exact reference match and exact amount -- no ambiguity.",
+            reason="Exact reference match and exact amount, settled within the expected window -- no ambiguity.",
         )
-    if _is_exact_amount(c, thresholds) and c.name_sim >= thresholds.high_name_similarity:
+    if strong_amount_name and date_ok:
         return DeterministicOutcome(
             status=C.STATUS_AUTO_MATCH, matched=c, duplicate_refs=dup_refs, considered=considered, rejected=rejected,
-            reason=f"Exact amount and high name similarity ({c.name_sim}/100) uniquely identify this candidate.",
+            reason=f"Exact amount and high name similarity ({c.name_sim}/100), settled within the expected "
+                   f"window, uniquely identify this candidate.",
         )
     if c.ref_match == "EXACT" and c.amount_diff_pct > thresholds.ai_hard_amount_mismatch_cap_pct:
         return DeterministicOutcome(
             status=C.STATUS_EXCEPTION, category=C.CAT_CONFLICTING_EVIDENCE, considered=considered, rejected=rejected,
             reason=f"Reference matches exactly but amount differs by {c.amount_diff_pct:.1%} "
                    f"(> {thresholds.ai_hard_amount_mismatch_cap_pct:.0%} safe cap) -- evidence conflicts.",
+        )
+    if (strong_ref_amount or strong_amount_name) and not date_ok:
+        return DeterministicOutcome(
+            status=NEEDS_AI, ai_candidates=[c], considered=considered, rejected=rejected,
+            reason=f"Reference/amount/name evidence is otherwise clean, but the settlement date is "
+                   f"{c.date_diff_days} day(s) from the payment date -- outside the "
+                   f"{thresholds.settlement_window_days}-day settlement window, so this evidence conflicts with "
+                   f"the expected timing and needs review rather than an automatic match.",
         )
     if c.amount_diff_pct <= thresholds.max_amount_mismatch_for_ai_pct and c.name_sim >= thresholds.min_name_similarity_for_ai:
         return DeterministicOutcome(
@@ -127,14 +151,14 @@ def decide_deterministic(candidates: list[Candidate], thresholds: Thresholds) ->
         )
 
     top = plausible[0]
-    if top.ref_match == "EXACT" and _is_exact_amount(top, thresholds):
+    if top.ref_match == "EXACT" and _is_exact_amount(top, thresholds) and _date_within_window(top, thresholds):
         rivals = [c for c in plausible[1:] if c.ref_match == "EXACT" and _is_exact_amount(c, thresholds)]
         if not rivals:
             return DeterministicOutcome(
                 status=C.STATUS_AUTO_MATCH, matched=top, duplicate_refs=duplicate_extra_refs,
                 rejected=plausible[1:] + noise, considered=effective,
-                reason=f"Exact reference+amount match clearly dominates {len(plausible) - 1} weaker "
-                       f"plausible alternative(s).",
+                reason=f"Exact reference+amount match, settled within the expected window, clearly dominates "
+                       f"{len(plausible) - 1} weaker plausible alternative(s).",
             )
 
     # Escalate only if at least one candidate is within an amount tolerance an AI could plausibly

@@ -3,8 +3,11 @@ __pycache__/
 *.pyc
 .env
 data/finance.db
+data/finance.db-wal
+data/finance.db-shm
 data/raw/*.csv
 data/raw/generation_summary.json
 .pytest_cache/
+.generation_tmp_*/
 web/runtime-config.js
 *.egg-info/

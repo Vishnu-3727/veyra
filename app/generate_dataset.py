@@ -15,6 +15,11 @@ Determinism: everything is derived from a single `random.Random(seed)`
 instance and a fixed anchor date, so re-running with the same seed/size
 reproduces byte-identical output.
 
+Publication: the dataset is staged in a temporary sibling directory and
+validated before being moved into the target directory, so a failed run
+cannot leave the active directory holding half of one dataset and half of
+another -- reconciliation would ingest such a mix without complaint.
+
 Usage:
     python -m app.generate_dataset --seed 42 --size 750 --out-dir data/raw
 """
@@ -23,14 +28,32 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
+import shutil
 import string
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 ANCHOR_DATE = datetime(2026, 8, 1, 9, 0, 0)  # fixed "today" for the synthetic world
+
+# Canonical on-disk layout of a dataset. Kept in one place because both the
+# writer and the post-write validator must agree on it exactly.
+CSV_SCHEMAS: dict[str, list[str]] = {
+    "payments.csv": ["payment_id", "order_id", "amount", "currency", "method", "customer_name",
+                     "customer_email", "created_at", "status", "description"],
+    "bank_settlements.csv": ["bank_ref", "utr", "settlement_date", "amount", "narration",
+                             "payer_name", "reference_hint"],
+    "invoices.csv": ["invoice_id", "order_id", "amount", "customer_name", "invoice_date",
+                     "description", "status"],
+    "ground_truth.csv": ["payment_id", "true_bank_ref", "true_invoice_id", "case_type",
+                         "is_safely_resolvable", "notes"],
+}
+SUMMARY_FILE = "generation_summary.json"
+STAGING_PREFIX = ".generation_tmp_"
 
 # ---------------------------------------------------------------------------
 # Name pools
@@ -193,6 +216,20 @@ class GroundTruthRow:
 
 
 def generate(seed: int, size: int, out_dir: Path) -> dict:
+    """Generate a dataset of `size` payments from `seed` and publish it to `out_dir`.
+
+    Everything is generated in memory first, then written to a temporary
+    staging directory, validated (files present, non-empty, expected headers,
+    row counts matching the in-memory tables, summary parses as JSON) and only
+    then moved into `out_dir`. If any step fails the exception propagates and
+    the dataset already in `out_dir` is left untouched.
+
+    Not fully atomic: promotion is five separate `os.replace()` calls, each
+    individually atomic, so a crash between them can still leave `out_dir`
+    holding a mix of the two datasets. That window is a few rename syscalls
+    wide instead of spanning the whole generate-and-write phase, and it is
+    only ever entered once the complete new dataset has passed validation.
+    """
     rng = random.Random(seed)
     entities = build_entities(rng)
 
@@ -456,18 +493,6 @@ def generate(seed: int, size: int, out_dir: Path) -> dict:
     rng.shuffle(banks)
     rng.shuffle(invoices)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _write_csv(out_dir / "payments.csv", payments,
-               ["payment_id", "order_id", "amount", "currency", "method", "customer_name",
-                "customer_email", "created_at", "status", "description"])
-    _write_csv(out_dir / "bank_settlements.csv", banks,
-               ["bank_ref", "utr", "settlement_date", "amount", "narration", "payer_name", "reference_hint"])
-    _write_csv(out_dir / "invoices.csv", invoices,
-               ["invoice_id", "order_id", "amount", "customer_name", "invoice_date", "description", "status"])
-    _write_csv(out_dir / "ground_truth.csv",
-               [gt.__dict__ for gt in ground_truth],
-               ["payment_id", "true_bank_ref", "true_invoice_id", "case_type", "is_safely_resolvable", "notes"])
-
     summary = {
         "seed": seed,
         "payments": len(payments),
@@ -477,9 +502,85 @@ def generate(seed: int, size: int, out_dir: Path) -> dict:
         "resolvable": sum(1 for g in ground_truth if g.is_safely_resolvable),
         "unresolvable": sum(1 for g in ground_truth if not g.is_safely_resolvable),
     }
-    with open(out_dir / "generation_summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+
+    _publish_dataset(
+        out_dir,
+        {
+            "payments.csv": payments,
+            "bank_settlements.csv": banks,
+            "invoices.csv": invoices,
+            "ground_truth.csv": [gt.__dict__ for gt in ground_truth],
+        },
+        summary,
+    )
     return summary
+
+
+def _publish_dataset(out_dir: Path, tables: dict[str, list[dict]], summary: dict) -> None:
+    """Stage, validate, then promote a complete dataset into `out_dir`.
+
+    Writing straight into the live raw directory means a crash between two
+    writes leaves payments from the new dataset next to bank rows and ground
+    truth from the old one -- a dataset that never existed as a consistent
+    whole, which reconciliation would nonetheless ingest happily. So every
+    file is built in a sibling temporary directory (same filesystem, so
+    promotion is a rename and not a copy), fully validated, and only then
+    moved into place.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stage = out_dir.parent / (STAGING_PREFIX + uuid4().hex)
+    try:
+        stage.mkdir()
+        for name, rows in tables.items():
+            _write_csv(stage / name, rows, CSV_SCHEMAS[name])
+        with open(stage / SUMMARY_FILE, "w") as f:
+            json.dump(summary, f, indent=2)
+
+        _validate_staged(stage, {name: len(rows) for name, rows in tables.items()})
+
+        # Each os.replace() is atomic within a filesystem, and nothing is
+        # promoted until the whole staged set has passed validation. Honest
+        # limitation: the promotion itself is a sequence of five renames, so a
+        # crash mid-sequence can still leave a mixed directory. The window is
+        # a handful of rename syscalls with no data generation or content I/O
+        # in between -- not the multi-file write phase it replaces. `out_dir`
+        # also holds unrelated state in normal operation, so it is never
+        # swapped or cleared wholesale.
+        for name in list(tables) + [SUMMARY_FILE]:
+            os.replace(stage / name, out_dir / name)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
+def _validate_staged(stage: Path, expected_counts: dict[str, int]) -> None:
+    """Reject a staged dataset that is incomplete, truncated or mis-shaped.
+
+    A short write or a silently failing disk is exactly the failure this whole
+    staging dance exists to catch, so the staged bytes are re-read rather than
+    trusted.
+    """
+    for name, expected in expected_counts.items():
+        path = stage / name
+        if not path.is_file():
+            raise RuntimeError(f"staged dataset is missing {name}")
+        if path.stat().st_size == 0:
+            raise RuntimeError(f"staged {name} is empty")
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if header != CSV_SCHEMAS[name]:
+                raise RuntimeError(f"staged {name} has unexpected header {header!r}")
+            written = sum(1 for _ in reader)
+        if written != expected:
+            raise RuntimeError(f"staged {name} has {written} rows, expected {expected}")
+
+    summary_path = stage / SUMMARY_FILE
+    if not summary_path.is_file():
+        raise RuntimeError(f"staged dataset is missing {SUMMARY_FILE}")
+    try:
+        json.loads(summary_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"staged {SUMMARY_FILE} is not valid JSON: {exc}") from exc
 
 
 def _write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:

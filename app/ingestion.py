@@ -7,8 +7,11 @@ even usable as evidence.
 
 All three sources share one shape (read -> key check -> parse amount/date ->
 insert -> tally), so they share one `_ingest` driven by the `_SOURCES` table
-below. Only payments persists a per-row validation verdict; the other two
-just count.
+below. Every source persists a per-row validation verdict: a malformed row is
+kept (flagged `validation_status='invalid'`) rather than dropped, so the engine
+can later distinguish "no bank/invoice record exists for this payment" from
+"a record exists but was unusable as evidence". Only a row with no usable
+primary key at all, or a duplicate of a key already ingested, is dropped.
 """
 from __future__ import annotations
 
@@ -50,11 +53,12 @@ _SOURCES = (
     Source(
         "bank_settlements", "bank_settlements.csv", "bank_ref",
         ("bank_ref", "utr", "settlement_date", "amount", "narration", "payer_name", "reference_hint"),
-        date_col="settlement_date",
+        date_col="settlement_date", track_validation=True,
     ),
     Source(
         "invoices", "invoices.csv", "invoice_id",
         ("invoice_id", "order_id", "amount", "customer_name", "invoice_date", "description", "status"),
+        required=("order_id",), track_validation=True,
     ),
 )
 
@@ -70,6 +74,7 @@ def _ingest(conn, path: Path, spec: Source) -> IngestionReport:
     rows = _read_rows(path)
     rows_valid = rows_invalid = 0
     errors: list[str] = []
+    seen_keys: set[str] = set()
 
     for row in rows:
         key_value = (row.get(spec.key) or "").strip()
@@ -78,6 +83,15 @@ def _ingest(conn, path: Path, spec: Source) -> IngestionReport:
             errors.append(f"row skipped: missing {spec.key}")
             rows_invalid += 1
             continue
+
+        if key_value in seen_keys:
+            # A duplicate primary key must never silently overwrite the record already ingested
+            # under that key (that would make one of two real financial records vanish without a
+            # trace). Drop the later duplicate and flag it instead.
+            errors.append(f"row skipped: duplicate {spec.key}={key_value}")
+            rows_invalid += 1
+            continue
+        seen_keys.add(key_value)
 
         amount = parse_amount(row.get("amount"))
         missing = [f for f in spec.required if not str(row.get(f, "")).strip()]
@@ -102,9 +116,12 @@ def _ingest(conn, path: Path, spec: Source) -> IngestionReport:
         else:
             rows_valid += 1
 
-        # table/column names come from the static _SOURCES table above, never from input
+        # table/column names come from the static _SOURCES table above, never from input. Plain
+        # INSERT (not OR REPLACE): every key reaching here is already known-unique for this batch
+        # (see seen_keys above), so a collision here would indicate a real bug, and should raise
+        # loudly rather than silently discard a record.
         conn.execute(
-            f"INSERT OR REPLACE INTO {spec.table} ({', '.join(values)}) "
+            f"INSERT INTO {spec.table} ({', '.join(values)}) "
             f"VALUES ({','.join('?' * len(values))})",
             tuple(values.values()),
         )

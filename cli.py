@@ -44,9 +44,18 @@ def cmd_evaluate(args) -> None:
 
 
 def cmd_baseline(args) -> None:
-    from app.baseline import compute_naive_baseline
+    from app import db
+    from app.baseline import compute_naive_baseline, compute_run_baseline
 
-    print(json.dumps(compute_naive_baseline(config.RAW_DIR), indent=2))
+    # Same rule as GET /baseline: compare the naive matcher against the engine on the SAME run's
+    # source snapshot, so the comparison cannot silently straddle two datasets.
+    run_id = args.run_id or db.latest_completed_run_id()
+    if run_id:
+        result = compute_run_baseline(run_id)
+        if result is not None:
+            print(json.dumps(result, indent=2))
+            return
+    print(json.dumps(compute_naive_baseline(config.RAW_DIR, run_id=run_id), indent=2))
 
 
 def main() -> None:
@@ -65,10 +74,18 @@ def main() -> None:
     p_eval.add_argument("--run-id", default=None, help="Defaults to the most recent run")
     p_eval.set_defaults(func=cmd_evaluate)
 
-    p_base = sub.add_parser("baseline", help="Compute the naive baseline comparison")
+    p_base = sub.add_parser("baseline", help="Compute the naive baseline comparison for a run")
+    p_base.add_argument("--run-id", default=None, help="Defaults to the most recent COMPLETED run")
     p_base.set_defaults(func=cmd_baseline)
 
     args = parser.parse_args()
+
+    # The CLI is a first-class entrypoint: `python cli.py evaluate` on a fresh checkout must not
+    # fail with "no such table" just because the API (which owns schema creation at startup) has
+    # never been launched in this directory. Idempotent; also applies pending column migrations.
+    from app import db
+
+    db.init_db()
     args.func(args)
 
 

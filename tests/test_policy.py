@@ -8,12 +8,12 @@ from app.policy import apply_ai_policy
 from config import THRESHOLDS
 
 
-def make_candidate(bank_ref="bnk_1", amount_diff_pct=0.0, name_sim=90) -> Candidate:
+def make_candidate(bank_ref="bnk_1", amount_diff_pct=0.0, name_sim=90, date_diff_days=1) -> Candidate:
     return Candidate(
         bank_ref=bank_ref, utr="UTR1", settlement_date="2026-08-01", amount=1000.0,
         narration="test", payer_name="Test Co", reference_hint="",
         amount_diff_abs=1000.0 * amount_diff_pct, amount_diff_pct=amount_diff_pct,
-        date_diff_days=1, ref_match="PARTIAL", name_sim=name_sim,
+        date_diff_days=date_diff_days, ref_match="PARTIAL", name_sim=name_sim,
     )
 
 
@@ -59,6 +59,18 @@ def test_ai_match_exceeding_hard_amount_cap_is_overridden_regardless_of_confiden
     the hard amount-mismatch cap."""
     cand = make_candidate(bank_ref="bnk_1", amount_diff_pct=0.20)  # 20% > 8% hard cap
     ai = AIResult(decision="MATCH", candidate_id="bnk_1", confidence=99, reasoning="very confident but wrong")
+    outcome = apply_ai_policy(ai, [cand], THRESHOLDS)
+    assert outcome.status == C.STATUS_EXCEPTION
+    assert outcome.category == C.CAT_UNSUPPORTED_AI
+    assert outcome.matched is None
+
+
+def test_ai_match_outside_settlement_window_is_overridden_regardless_of_confidence():
+    """The settlement-date cap is a hard policy guardrail just like the amount cap: an AI
+    cannot approve a match whose settlement date falls outside the window, no matter how
+    confident it claims to be."""
+    cand = make_candidate(bank_ref="bnk_1", amount_diff_pct=0.0, date_diff_days=30)  # > 7-day window
+    ai = AIResult(decision="MATCH", candidate_id="bnk_1", confidence=99, reasoning="very confident but late")
     outcome = apply_ai_policy(ai, [cand], THRESHOLDS)
     assert outcome.status == C.STATUS_EXCEPTION
     assert outcome.category == C.CAT_UNSUPPORTED_AI

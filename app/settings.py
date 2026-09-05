@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, replace
 from typing import Optional
+from urllib.parse import urlparse
 
 import config
 from app import db
@@ -93,13 +94,94 @@ class LLMSettings:
         }
 
 
-_lock = threading.Lock()
+_lock = threading.RLock()  # RLock: update() re-enters via get() while already holding the lock
 _settings: Optional[LLMSettings] = None
+
+
+def _provider_for_base_url(base_url: str) -> str:
+    """Which preset a `.env`-supplied base URL belongs to.
+
+    Matching against the preset table (rather than special-casing one vendor) is what lets a
+    key configured purely in `.env` reach a supported provider: labelling an NVIDIA NIM URL as
+    "custom" left the provider mislabelled in run metadata and, because keys are deliberately
+    provider-scoped, stopped the env key from ever being adopted for that provider.
+    """
+    url = (base_url or "").strip().rstrip("/")
+    for name, preset in PROVIDER_PRESETS.items():
+        known = (preset["base_url"] or "").strip().rstrip("/")
+        if known and url == known:
+            return name
+    return "custom"
+
+
+# Hosts that must never be reachable from an API-supplied base URL: an operator-facing settings
+# endpoint that accepts any URL turns the stored provider key into an exfiltration target and the
+# server into an SSRF probe (cloud metadata, internal admin ports). Loopback/private ranges are
+# only reachable when the operator explicitly opts in (`LLM_ALLOW_CUSTOM_ENDPOINT=1`), which is
+# what a local vLLM/Ollama deployment needs.
+_PRIVATE_HOST_PREFIXES = (
+    "127.", "10.", "192.168.", "169.254.", "172.16.", "172.17.", "172.18.", "172.19.",
+    "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+    "172.28.", "172.29.", "172.30.", "172.31.",
+)
+_PRIVATE_HOSTNAMES = ("localhost", "0.0.0.0", "::1", "[::1]", "metadata", "metadata.google.internal")
+
+
+def preset_base_urls() -> set[str]:
+    """Normalized base URLs of the curated presets -- the API's allowlist."""
+    return {_normalize_url(p["base_url"]) for p in PROVIDER_PRESETS.values() if p["base_url"]}
+
+
+def _normalize_url(url: Optional[str]) -> str:
+    return (url or "").strip().rstrip("/")
+
+
+def validate_api_base_url(base_url: str, provider: Optional[str]) -> str:
+    """Gatekeeper for a base URL arriving over HTTP (POST /settings).
+
+    Environment-seeded URLs bypass this deliberately: `.env` is operator-owned configuration,
+    while an HTTP request may not be. A preset URL is always accepted. Anything else is a
+    custom endpoint and requires BOTH an explicit `provider="custom"` selection and the
+    `LLM_ALLOW_CUSTOM_ENDPOINT` opt-in, must be https, and must not point at loopback,
+    link-local, or private address space.
+
+    Raises ValueError with an operator-readable reason; the API turns that into a 400.
+    """
+    url = _normalize_url(base_url)
+    if not url:
+        return url
+    if url in preset_base_urls():
+        return url
+
+    if provider != "custom":
+        raise ValueError(
+            f"base_url {url!r} is not one of the configured providers. Select provider='custom' "
+            f"to use a different endpoint. Valid endpoints: {sorted(preset_base_urls())}"
+        )
+    if not config.LLM_ALLOW_CUSTOM_ENDPOINT:
+        raise ValueError(
+            "Custom LLM endpoints are disabled. Set LLM_ALLOW_CUSTOM_ENDPOINT=1 in the "
+            "environment to allow this deployment to send its API key to a non-preset endpoint."
+        )
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"base_url must use https, got {parsed.scheme or 'no'} scheme")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("base_url must include a hostname")
+    if host in _PRIVATE_HOSTNAMES or host.startswith(_PRIVATE_HOST_PREFIXES):
+        raise ValueError(
+            f"base_url host {host!r} is loopback/private address space -- refused, because a "
+            f"settings change must not be able to aim the configured API key at this host's "
+            f"own network."
+        )
+    return url
 
 
 def _seed_from_env() -> LLMSettings:
     return LLMSettings(
-        provider="openrouter" if "openrouter" in config.LLM_BASE_URL else "custom",
+        provider=_provider_for_base_url(config.LLM_BASE_URL),
         api_key=config.LLM_API_KEY,
         base_url=config.LLM_BASE_URL,
         model=config.LLM_MODEL,
@@ -128,10 +210,20 @@ def get() -> LLMSettings:
         seeded = _seed_from_env()
         persisted = _load_persisted()
         if persisted:
+            stored_provider = persisted.get("llm_provider", seeded.provider)
+            stored_key = persisted.get("llm_api_key") or ""
+            # An EMPTY stored key means "no key configured", not "the key is the empty string".
+            # Without this, a row written by clearing the key in the Settings panel would
+            # permanently mask a key present in `.env`, and AI would stay disabled on the next
+            # boot with nothing to explain why. The env key is only adopted when the stored
+            # provider still matches the one `.env` describes, so this cannot smuggle a key
+            # issued by one provider into requests aimed at another.
+            if not stored_key and stored_provider == seeded.provider:
+                stored_key = seeded.api_key
             seeded = replace(
                 seeded,
-                provider=persisted.get("llm_provider", seeded.provider),
-                api_key=persisted.get("llm_api_key", seeded.api_key),
+                provider=stored_provider,
+                api_key=stored_key,
                 base_url=persisted.get("llm_base_url", seeded.base_url),
                 model=persisted.get("llm_model", seeded.model),
             )
@@ -140,23 +232,61 @@ def get() -> LLMSettings:
 
 
 def update(provider: Optional[str] = None, api_key: Optional[str] = None,
-           base_url: Optional[str] = None, model: Optional[str] = None) -> LLMSettings:
-    """Apply a partial update and persist it. `api_key=None` keeps the
-    existing key (so switching provider/model doesn't force re-entering a
-    key); pass an empty string explicitly to clear it."""
+           base_url: Optional[str] = None, model: Optional[str] = None,
+           trusted: bool = False) -> LLMSettings:
+    """Apply a partial update and persist it.
+
+    Key handling is deliberately scoped to the ENDPOINT the key was issued for, not merely to
+    the provider label: an API key is only valid for the provider it came from, so changing the
+    provider OR the base URL without supplying a new key clears the stored key (AI then falls
+    back to the safe "unavailable" path until a key for the new endpoint is entered). Scoping on
+    the label alone was exploitable -- a request supplying only `base_url` left `provider`
+    unchanged, so the guard never fired and the next AI call sent the stored key, as a bearer
+    token, to the caller's endpoint. Switching the MODEL within the same endpoint keeps the key.
+    `api_key=None` means "not supplied"; an explicit empty string clears the key.
+
+    `trusted=True` marks an operator-local caller (env seeding, CLI) and skips base-URL
+    validation. Everything reaching this from HTTP MUST leave it False.
+    """
     global _settings
     with _lock:
         cur = _settings or get()
-        preset = PROVIDER_PRESETS.get(provider or cur.provider, PROVIDER_PRESETS["custom"])
+        target_provider = provider or cur.provider
+        if base_url and not trusted:
+            base_url = validate_api_base_url(base_url, provider or cur.provider)
+        preset = PROVIDER_PRESETS.get(target_provider, PROVIDER_PRESETS["custom"])
+        target_base_url = (
+            (base_url or "").strip() or (preset["base_url"] if provider else "") or cur.base_url
+        )
+        endpoint_changed = (
+            target_provider != cur.provider
+            or _normalize_url(target_base_url) != _normalize_url(cur.base_url)
+        )
+        if api_key is not None:
+            new_key = api_key.strip()
+        else:
+            new_key = "" if endpoint_changed else cur.api_key
         new = replace(
             cur,
-            provider=provider or cur.provider,
-            api_key=cur.api_key if api_key is None else api_key.strip(),
-            base_url=(base_url or "").strip() or (preset["base_url"] if provider else "") or cur.base_url,
+            provider=target_provider,
+            api_key=new_key,
+            base_url=target_base_url,
             model=(model or "").strip() or (preset["default_model"] if provider else "") or cur.model,
         )
+        # `_load_persisted` already tolerates a missing table (first boot reads from `.env`), so
+        # the writer must be equally self-sufficient rather than assuming the API created the
+        # schema at startup. Idempotent, and settings writes are rare operator actions.
+        #
+        # The key is written in the clear (SQLite has no column encryption and inventing one
+        # here would be theatre), which makes data/finance.db a credential store: db.init_db()
+        # therefore restricts it to mode 0600. An operator who does not want the key on disk at
+        # all sets LLM_STORE_CREDENTIAL_ON_DISK=0 -- the key then lives only in this process's
+        # memory (and in `.env`, if that is where it came from) and a dashboard-entered key is
+        # gone after a restart.
+        persisted_key = new.api_key if config.LLM_STORE_CREDENTIAL_ON_DISK else ""
+        db.init_db()
         with db.get_conn() as conn:
-            for k, v in zip(_SETTINGS_KEYS, (new.provider, new.api_key, new.base_url, new.model)):
+            for k, v in zip(_SETTINGS_KEYS, (new.provider, persisted_key, new.base_url, new.model)):
                 conn.execute(
                     "INSERT INTO app_settings (key, value) VALUES (?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
