@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Frontend](https://img.shields.io/badge/frontend-vanilla%20JS%20%C2%B7%20zero%20build-6ea8ea?style=flat-square)](web/)
-[![Tests](https://img.shields.io/badge/tests-186%20passing-brightgreen?style=flat-square)](#verification)
+[![Tests](https://img.shields.io/badge/tests-189%20passing-brightgreen?style=flat-square)](#verification)
 [![Live AI](https://img.shields.io/badge/live%20LLM%20path-verified-brightgreen?style=flat-square)](#live-ai-verified-against-a-real-provider)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
@@ -356,7 +356,7 @@ AI-eligible cases (reference variations, small amount mismatches, weak-name-but-
 | `EXCEPTION` | 132 | 105 |
 | `MISSED_OPPORTUNITY` | 30 | **3** |
 | `UNSAFE_AUTO` / `INCORRECT_AUTO` | 0 / 0 | **0 / 0** |
-| Batch wall time | ~0.4 s | 319 s *(network-bound)* |
+| Batch wall time | ~0.4 s | 319 s *(network-bound; this run predates concurrent escalation)* |
 
 Of the 48 real calls: **27** produced a policy-approved `AI_ASSISTED_MATCH`, **15** were the model
 *declining* on genuinely indistinguishable candidate pairs (correctly routed to human review), and **6**
@@ -573,16 +573,16 @@ Setting `API_AUTH_TOKEN` requires `X-API-Token` (or `Authorization: Bearer`) on 
 ## Verification
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/ -q    # 186 passing
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/ -q    # 189 passing
 python scripts/benchmark.py --sizes 750 1500 --oracle # reproducible performance numbers
 python scripts/check_package.py                       # submission hygiene
 ```
 
-**186 tests** cover: ingestion/validation (duplicate keys, non-finite amounts, preserved-but-invalid
+**189 tests** cover: ingestion/validation (duplicate keys, non-finite amounts, preserved-but-invalid
 rows), atomic dataset generation, candidate generation *including an equivalence proof between the indexed
 and brute-force generators over full seeded datasets and garbled references*, the deterministic decision
 tree, AI output-schema validation and policy guardrails, LLM transport behaviour, per-run AI-config
-freezing, run lifecycle (`RUNNING`/`COMPLETED`/`FAILED`, plus a first-ever run against a database that
+freezing, the concurrency contract of the AI escalation batch, run lifecycle (`RUNNING`/`COMPLETED`/`FAILED`, plus a first-ever run against a database that
 does not exist yet), provider/key precedence, evaluation and baseline reproducibility across regenerated
 datasets, pipeline behaviour, and the API boundary (historical runs, unknown-run 404s, operation locking,
 parameter bounds, auth, idempotent human review).
@@ -640,8 +640,14 @@ A real external completion has been observed end-to-end (NVIDIA NIM, `nvidia/nem
 - **6 of 48 calls failed** on that run (`503 Service temporarily overloaded`, 20 s hard timeouts). They
   failed closed to `AI_UNAVAILABLE`, which is correct — but expect a different AI-assisted count on any
   given run. **The deterministic numbers are the reproducible ones.**
-- **Latency is network-bound**: the AI-enabled 750-record batch takes ~5 minutes versus ~0.4 s
-  deterministic. That is a per-record LLM call on a free tier, not an engine regression.
+- **Latency is network-bound**: the AI-enabled batch spends essentially all of its wall time waiting on
+  the provider, versus ~0.4 s deterministic. The escalated cases are therefore reasoned about
+  concurrently, `AI_CONCURRENCY` at a time (default 3). Measured on one host against NVIDIA NIM
+  (`nemotron-3-super-120b-a12b`, 48 escalations, same 750-record dataset): **146 s at 8 concurrent,
+  288 s at 3**. An earlier session measured 319 s fully serial, but provider latency drifts between
+  sessions, so treat that as context rather than a matched control -- the 146 s / 288 s pair is the
+  like-for-like one. The default is 3 because this repo defaults to OpenRouter's free tier (~20
+  requests/minute); on a paid or direct endpoint raise it to 8-16, which is where the win is.
 - **Model access is account-scoped**: NVIDIA's `/v1/models` lists models a given credential cannot invoke
   (`404 … Not found for account`). If AI silently becomes unavailable, check the model, not the wiring —
   `LLM_MODEL` is the knob.
@@ -706,7 +712,7 @@ web/                         static frontend — index.html, styles.css, app.js,
 scripts/
   benchmark.py               reproducible performance benchmark
   check_package.py           submission-package hygiene checker
-tests/                       186 tests — see Verification
+tests/                       189 tests — see Verification
 docs/screenshots/            dashboard screenshots
 ```
 

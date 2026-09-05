@@ -15,12 +15,34 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# `python3` is not a universal name: Windows (Git Bash) ships `python`, and its
+# `python3.exe` is usually a Microsoft Store stub that resolves but refuses to run --
+# so a candidate is only accepted once it has actually executed something.
+pick_python() {
+    for candidate in "${PYTHON:-}" python3 python; do
+        [ -n "$candidate" ] || continue
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        "$candidate" -c "import sys; sys.exit(0)" >/dev/null 2>&1 && { echo "$candidate"; return 0; }
+    done
+    echo "ERROR: no working Python interpreter found (tried \$PYTHON, python3, python)." >&2
+    echo "       Install Python 3.10+ or point PYTHON at it: PYTHON=/path/to/python ./run.sh" >&2
+    exit 1
+}
+
 if [ ! -d .venv ]; then
     echo "==> Creating virtual environment..."
-    python3 -m venv .venv
+    "$(pick_python)" -m venv .venv
 fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
+# POSIX venvs put their entry points in bin/, Windows venvs in Scripts/.
+VENV_ACTIVATE=".venv/bin/activate"
+[ -f "$VENV_ACTIVATE" ] || VENV_ACTIVATE=".venv/Scripts/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+    echo "ERROR: .venv exists but has no activate script ($VENV_ACTIVATE)." >&2
+    echo "       Delete .venv and re-run to rebuild it." >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$VENV_ACTIVATE"
 
 if ! python -c "import fastapi, rapidfuzz, openai" >/dev/null 2>&1; then
     echo "==> Installing dependencies (first run only)..."
@@ -94,7 +116,7 @@ else
         fi
         echo "       The dashboard was NOT started -- it would only have shown failing requests." >&2
         echo "       Reproduce the startup error directly to see the real reason:" >&2
-        echo "           cd $(pwd) && source .venv/bin/activate && uvicorn app.api:app --port ${API_PORT}" >&2
+        echo "           cd $(pwd) && source ${VENV_ACTIVATE} && uvicorn app.api:app --port ${API_PORT}" >&2
         echo "       Usual causes: an import error under app/, a missing dependency" >&2
         echo "       (pip install -r requirements.txt), or port ${API_PORT} held by another" >&2
         echo "       process (retry with API_PORT=8001 ./run.sh)." >&2
