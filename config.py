@@ -82,11 +82,15 @@ AI_ENABLED = bool(LLM_API_KEY)
 
 # How many AI-eligible cases are reasoned about at once. The AI escalation set is the only
 # network-bound part of a run; at ~7s per call a 48-case batch costs ~5 minutes serially and
-# ~40s at 8 concurrent. Kept as a knob because the ceiling is the PROVIDER's rate limit, not
-# ours: free tiers commonly allow ~20 requests/minute, and exceeding that trades latency for
-# 429s (which the circuit breaker then reads as an outage). Lower it if you see 429s; 1
-# restores the original fully-serial behaviour.
-AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "8")))
+# well under a minute concurrently.
+#
+# The ceiling is the PROVIDER's rate limit, not ours, so the default is set for the provider
+# this repo defaults to: OpenRouter's free tier, commonly ~20 requests/minute. At ~7s per call
+# 3 in flight stays under that; 8 does not, and the 429s that follow are indistinguishable from
+# an outage to the circuit breaker -- it would trip and disable AI for the rest of the batch.
+# On a paid or direct endpoint (NVIDIA NIM, OpenAI, a local vLLM) raise this: 8-16 is fine and
+# is where the latency win actually lives. 1 restores the original fully-serial behaviour.
+AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "3")))
 
 # Transport-level workaround for a common laptop/wifi failure mode, kept as an explicit knob
 # rather than hidden magic. Some networks advertise an IPv6 default route but black-hole IPv6
